@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VidyaAI</string>
+    <string name="app_tagline">Your study partner, always awake</string>
+
+    <string name="nav_home">Home</string>
+    <string name="nav_tutor">Tutor</string>
+    <string name="nav_notes">Notes</string>
+    <string name="nav_quiz">Quiz</string>
+    <string name="nav_profile">Profile</string>
+
+    <string name="orb_hint">Tap the orb to talk to Vidya</string>
+    <string name="orb_state_idle">Ready when you are</string>
+    <string name="orb_state_listening">Listening…</string>
+    <string name="orb_state_thinking">Thinking…</string>
+    <string name="orb_state_speaking">Explaining…</string>
+
+    <string name="offline_title">You are offline</string>
+    <string name="offline_body">Downloaded notes still work. New answers will resume once you are back online.</string>
+
+    <string name="section_continue">Continue learning</string>
+    <string name="section_quick">Quick actions</string>
+    <string name="tip_of_day">Tip of the day</string>
+
+    <string name="action_ask">Ask a doubt</string>
+    <string name="action_scan">Scan notes</string>
+    <string name="action_practice">Practice</string>
+
+    <string name="coming_soon">Coming soon</string>
+    <string name="action_back_home">Back to home</string>
+    <string name="cd_streak">Study streak</string>
+    <string name="cd_orb">Vidya voice orb</string>
+
+    <string name="tutor_title">AI Tutor</string>
+    <string name="tutor_body">Ask anything from your syllabus and get a step-by-step answer with the exact page it came from.</string>
+    <string name="notes_title">Notes</string>
+    <string name="notes_body">Scan a page, and Vidya turns it into short notes, flashcards and a summary you can revise offline.</string>
+    <string name="quiz_title">Quiz</string>
+    <string name="quiz_body">Daily practice sets built from what you got wrong last time, with instant explanations.</string>
+    <string name="profile_title">Profile</string>
+    <string name="profile_body">Your streak, subjects, saved answers and language preference will live here.</string>
+</resources>
