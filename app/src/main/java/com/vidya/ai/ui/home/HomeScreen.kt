@@ -20,7 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.Create
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
@@ -88,7 +88,7 @@ fun HomeScreen(
                     )
                     QuickActionCard(
                         modifier = Modifier.weight(1f),
-                        icon = Icons.Rounded.PhotoCamera,
+                        icon = Icons.Rounded.Create,
                         label = stringResource(R.string.action_scan),
                         onClick = { onNavigate(VidyaDestination.Notes.route) }
                     )
