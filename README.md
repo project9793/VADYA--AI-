@@ -31,11 +31,12 @@ A few supporting resource files are included so the project actually builds:
 
 ## Build
 
-1. Open the `VidyaAI` folder in Android Studio (Ladybug or newer).
-2. Let Studio generate the Gradle wrapper, or run `gradle wrapper --gradle-version 8.9` once.
+1. Open the `VidyaAI` folder in Android Studio.
+2. Let Studio generate the Gradle wrapper, or run `gradle wrapper --gradle-version 8.7` once.
 3. `./gradlew :app:assembleDebug`
 
-Toolchain: AGP 8.7.2, Kotlin 2.0.21, Compose BOM 2024.10.01, compileSdk 35, minSdk 24, JDK 17.
+Toolchain: AGP 8.5.2, Kotlin 1.9.24, Compose compiler 1.5.14, Compose BOM 2024.06.00,
+compileSdk 34, targetSdk 34, minSdk 24, JDK 17, Gradle 8.7 or newer.
 
 ## Notes
 
