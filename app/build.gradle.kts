@@ -11,10 +11,32 @@ android {
         applicationId = "com.vidya.ai"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
+
+    signingConfigs {
+        // One fixed key committed in the repo, so every build can be installed
+        // over the previous one (same signature) on any phone.
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/vidya-debug.p12")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            storeType = "PKCS12"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildTypes {
+        debug {
+            // Not debuggable: some vendor installers (MIUI, Realme, Vivo) refuse
+            // to install debuggable APKs from a file manager.
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
