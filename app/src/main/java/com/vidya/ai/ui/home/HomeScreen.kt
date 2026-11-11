@@ -1,6 +1,10 @@
 package com.vidya.ai.ui.home
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.platform.LocalContext
+import com.vidya.ai.core.MicPermission
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -24,6 +28,19 @@ import com.vidya.ai.ui.theme.VidyaCyan
 fun HomeScreen(vm: HomeViewModel = viewModel()) {
     val ui by vm.state.collectAsStateWithLifecycle()
     var text by remember { mutableStateOf("") }
+
+    val ctx = LocalContext.current
+    var micDenied by remember { mutableStateOf(false) }
+    val micLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        micDenied = !granted
+        if (granted) vm.onMicTap()
+    }
+    val onMicClick = {
+        if (MicPermission.has(ctx)) { micDenied = false; vm.onMicTap() }
+        else micLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
 
     val statusText = when (ui.orb) {
         OrbState.Idle -> "तैयार"
@@ -63,11 +80,18 @@ fun HomeScreen(vm: HomeViewModel = viewModel()) {
 
         Spacer(Modifier.height(16.dp))
         FilledIconButton(
-            onClick = vm::onMicTap,
+            onClick = onMicClick,
             modifier = Modifier.size(72.dp),
             shape = CircleShape
         ) {
             Icon(Icons.Default.Mic, contentDescription = "Voice assistant", Modifier.size(32.dp))
+        }
+
+        if (micDenied) {
+            Spacer(Modifier.height(8.dp))
+            Text("Mic permission चाहिए। Settings tab में जाकर दें।",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.tertiary)
         }
 
         Spacer(Modifier.height(16.dp))

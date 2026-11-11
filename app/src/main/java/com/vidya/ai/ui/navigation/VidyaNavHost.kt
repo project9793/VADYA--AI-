@@ -12,6 +12,7 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.*
 import com.vidya.ai.ui.common.ComingSoonScreen
 import com.vidya.ai.ui.home.HomeScreen
+import com.vidya.ai.ui.settings.SettingsScreen
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "Home", Icons.Default.Home),
@@ -42,7 +43,7 @@ fun VidyaNavHost() {
                             }
                         },
                         icon = { Icon(tab.icon, contentDescription = tab.label) },
-                        label = { Text(tab.label) }
+                        label = { Text(tab.label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelSmall) }
                     )
                 }
             }
@@ -53,7 +54,7 @@ fun VidyaNavHost() {
             composable(Tab.Chat.route) { ComingSoonScreen("Chat", "Phase 3") }
             composable(Tab.History.route) { ComingSoonScreen("History", "Phase 11") }
             composable(Tab.Tools.route) { ComingSoonScreen("Tools", "Phase 8–10") }
-            composable(Tab.Settings.route) { ComingSoonScreen("Settings", "Phase 2") }
+            composable(Tab.Settings.route) { SettingsScreen() }
         }
     }
 }
