@@ -1,14 +1,12 @@
 package com.vidya.ai.ui.home
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.ui.platform.LocalContext
-import com.vidya.ai.core.MicPermission
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -18,29 +16,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import com.vidya.ai.ui.assistant.AssistantViewModel
+import com.vidya.ai.ui.common.rememberMicAction
 import com.vidya.ai.ui.components.AiOrb
 import com.vidya.ai.ui.components.OrbState
 import com.vidya.ai.ui.theme.VidyaCyan
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HomeScreen(vm: HomeViewModel = viewModel()) {
-    val ui by vm.state.collectAsStateWithLifecycle()
+fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
+    val ui by vm.ui.collectAsStateWithLifecycle()
+    val online by vm.online.collectAsStateWithLifecycle()
     var text by remember { mutableStateOf("") }
 
-    val ctx = LocalContext.current
-    var micDenied by remember { mutableStateOf(false) }
-    val micLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        micDenied = !granted
-        if (granted) vm.onMicTap()
-    }
-    val onMicClick = {
-        if (MicPermission.has(ctx)) { micDenied = false; vm.onMicTap() }
-        else micLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-    }
+    val onMic = rememberMicAction(
+        onDenied = { vm.showError("Mic permission चाहिए। Settings tab में जाकर दें।") }
+    ) { vm.toggleMic() }
 
     val statusText = when (ui.orb) {
         OrbState.Idle -> "तैयार"
@@ -48,53 +39,77 @@ fun HomeScreen(vm: HomeViewModel = viewModel()) {
         OrbState.Thinking -> "सोच रही हूँ…"
         OrbState.Speaking -> "बोल रही हूँ…"
     }
+    val msgs = ui.conv.messages
+    val lastUser = msgs.lastOrNull { it.role == "user" }
+    val lastModel = msgs.lastOrNull()?.takeIf { it.role == "model" }
 
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("VIDYA AI", style = MaterialTheme.typography.headlineLarge, color = VidyaCyan)
-        Text("Your Voice. Your Intelligence. Your Personal AI.",
-            style = MaterialTheme.typography.bodySmall)
+        Text("Your Voice. Your Intelligence. Your Personal AI.", style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
-        Text("नमस्ते! आज मैं आपकी कैसे मदद करूँ?",
-            style = MaterialTheme.typography.titleMedium)
+        Text("नमस्ते! आज मैं आपकी कैसे मदद करूँ?", style = MaterialTheme.typography.titleMedium)
 
-        Spacer(Modifier.height(12.dp))
-        AiOrb(state = ui.orb)
+        Spacer(Modifier.height(8.dp))
+        AiOrb(
+            state = ui.orb,
+            size = 200.dp,
+            modifier = Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onMic
+            )
+        )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AssistChip(onClick = {}, label = { Text(statusText) })
             AssistChip(
                 onClick = {},
-                label = { Text(if (ui.online) "Online" else "Offline") },
+                label = { Text(if (online) "Online" else "Offline") },
                 leadingIcon = {
-                    Icon(if (ui.online) Icons.Default.Wifi else Icons.Default.WifiOff,
+                    Icon(if (online) Icons.Default.Wifi else Icons.Default.WifiOff,
                         contentDescription = null, modifier = Modifier.size(18.dp))
                 }
             )
+            FilterChip(
+                selected = ui.handsFree,
+                onClick = vm::toggleHandsFree,
+                label = { Text("Hands-free") }
+            )
         }
 
-        Spacer(Modifier.height(16.dp))
-        FilledIconButton(
-            onClick = onMicClick,
-            modifier = Modifier.size(72.dp),
-            shape = CircleShape
-        ) {
-            Icon(Icons.Default.Mic, contentDescription = "Voice assistant", Modifier.size(32.dp))
+        Spacer(Modifier.height(12.dp))
+        FilledIconButton(onClick = onMic, modifier = Modifier.size(72.dp), shape = CircleShape) {
+            Icon(
+                if (ui.orb == OrbState.Idle) Icons.Default.Mic else Icons.Default.Stop,
+                contentDescription = "Voice assistant", modifier = Modifier.size(32.dp)
+            )
         }
+        Text("Orb या mic दबाकर बोलिए", style = MaterialTheme.typography.bodySmall)
 
-        if (micDenied) {
+        if (ui.partial.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
-            Text("Mic permission चाहिए। Settings tab में जाकर दें।",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.tertiary)
+            Text("🎤 ${ui.partial}", style = MaterialTheme.typography.bodyLarge)
+        }
+        ui.error?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
         }
 
-        Spacer(Modifier.height(16.dp))
+        if (lastUser != null) {
+            Spacer(Modifier.height(12.dp))
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("आप: ${lastUser.text}", style = MaterialTheme.typography.bodyMedium)
+                    if (lastModel != null) Text(lastModel.text, style = MaterialTheme.typography.bodyLarge)
+                    TextButton(onClick = onOpenChat) { Text("पूरी chat देखें") }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = text,
             onValueChange = { text = it },
@@ -102,26 +117,26 @@ fun HomeScreen(vm: HomeViewModel = viewModel()) {
             placeholder = { Text("कुछ भी पूछिए…") },
             shape = RoundedCornerShape(28.dp),
             trailingIcon = {
-                IconButton(onClick = { /* Phase 3: send to Gemini */ }, enabled = text.isNotBlank()) {
-                    Icon(Icons.Default.Send, contentDescription = "Send")
-                }
+                IconButton(
+                    onClick = { vm.sendText(text); text = "" },
+                    enabled = text.isNotBlank() && !ui.busy
+                ) { Icon(Icons.Default.Send, contentDescription = "Send") }
             }
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            QuickAction("Search", Icons.Default.Search)
-            QuickAction("Code", Icons.Default.Code)
-            QuickAction("Translate", Icons.Default.Translate)
-            QuickAction("Camera", Icons.Default.CameraAlt)
+            QuickAction("Code", Icons.Default.Code) { text = "इस काम का code लिखो: " }
+            QuickAction("Translate", Icons.Default.Translate) { text = "इसे English में translate करो: " }
+            QuickAction("Explain", Icons.Default.Lightbulb) { text = "आसान भाषा में समझाओ: " }
         }
     }
 }
 
 @Composable
-private fun QuickAction(label: String, icon: ImageVector) {
+private fun QuickAction(label: String, icon: ImageVector, onClick: () -> Unit) {
     AssistChip(
-        onClick = { /* wired in later phases */ },
+        onClick = onClick,
         label = { Text(label) },
         leadingIcon = { Icon(icon, null, Modifier.size(18.dp)) }
     )

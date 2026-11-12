@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -23,6 +24,14 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vidya.ai.core.MicPermission
 
+private val LANGS = listOf(
+    "हिन्दी" to "hi-IN", "English" to "en-IN", "বাংলা" to "bn-IN", "தமிழ்" to "ta-IN",
+    "తెలుగు" to "te-IN", "मराठी" to "mr-IN", "ગુજરાતી" to "gu-IN", "ਪੰਜਾਬੀ" to "pa-IN",
+    "اردو" to "ur-IN", "नेपाली" to "ne-NP", "Español" to "es-ES", "Français" to "fr-FR",
+    "Deutsch" to "de-DE", "العربية" to "ar-SA", "日本語" to "ja-JP", "中文" to "zh-CN"
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
     val ctx = LocalContext.current
@@ -31,6 +40,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { micGranted = it }
+    var lang by remember { mutableStateOf(vm.sttLang) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -56,29 +66,51 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
         }
 
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("बोलने की भाषा (Voice language)", style = MaterialTheme.typography.titleMedium)
+                Text("Speech recognition इसी भाषा में सुनेगा। AI का जवाब आपकी भाषा में ही आएगा।",
+                    style = MaterialTheme.typography.bodySmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LANGS.forEach { (label, tag) ->
+                        FilterChip(
+                            selected = lang == tag,
+                            onClick = { lang = tag; vm.sttLang = tag },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+        }
+
         KeyCard(
             title = "Gemini API key",
             hint = "Google AI Studio (aistudio.google.com) से key बनाइए।",
-            initial = vm.savedGemini,
-            onSave = vm::saveGemini
+            initial = vm.savedGemini, secret = true, onSave = vm::saveGemini
+        )
+        KeyCard(
+            title = "Gemini model",
+            hint = "Default: gemini-2.5-flash. Error आए तो gemini-3.5-flash या gemini-3.1-flash-lite आज़माइए।",
+            initial = vm.savedModel, secret = false, onSave = vm::saveModel
         )
         KeyCard(
             title = "Search API key",
-            hint = "Internet search के लिए। Provider Phase 7 में तय होगा; अभी key सुरक्षित रख सकते हैं।",
-            initial = vm.savedSearch,
-            onSave = vm::saveSearch
+            hint = "Internet search (Phase 7) के लिए। अभी सिर्फ़ सुरक्षित रखी जाती है।",
+            initial = vm.savedSearch, secret = true, onSave = vm::saveSearch
         )
         Text(
-            "Keys इस फ़ोन में encrypted रहती हैं। बाद के Phase में इन्हें Firebase backend पर ले जाया जाएगा।",
+            "Keys इस फ़ोन में encrypted रहती हैं।",
             style = MaterialTheme.typography.bodySmall
         )
     }
 }
 
 @Composable
-private fun KeyCard(title: String, hint: String, initial: String, onSave: (String) -> Unit) {
+private fun KeyCard(
+    title: String, hint: String, initial: String, secret: Boolean, onSave: (String) -> Unit
+) {
     var value by remember { mutableStateOf(initial) }
-    var visible by remember { mutableStateOf(false) }
+    var visible by remember { mutableStateOf(!secret) }
     var saved by remember { mutableStateOf(initial.isNotBlank()) }
 
     Card(Modifier.fillMaxWidth()) {
@@ -92,18 +124,18 @@ private fun KeyCard(title: String, hint: String, initial: String, onSave: (Strin
                 singleLine = true,
                 visualTransformation =
                     if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
+                trailingIcon = if (secret) ({
                     IconButton(onClick = { visible = !visible }) {
                         Icon(
                             if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                             contentDescription = "Show/Hide"
                         )
                     }
-                }
+                }) else null
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { onSave(value); saved = true }, enabled = !saved) { Text("Save") }
-                if (saved && value.isNotBlank()) Text("✔ Saved", Modifier.align(androidx.compose.ui.Alignment.CenterVertically))
+                if (saved && value.isNotBlank()) Text("✔ Saved")
             }
         }
     }

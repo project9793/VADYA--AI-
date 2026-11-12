@@ -1,0 +1,101 @@
+package com.vidya.ai.core
+
+import com.vidya.ai.data.ChatMessage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+
+class GeminiClient {
+
+    private fun systemPrompt(voice: Boolean) = buildString {
+        append("You are VIDYA AI, a friendly, accurate personal assistant. ")
+        append("Reply in the same language the user writes in (Hindi, Hinglish, English or any other). ")
+        append("Do not use markdown symbols like ** or #. Use plain text. ")
+        if (voice) append("This is a spoken conversation: answer in 1 to 3 short, natural sentences unless asked for detail. ")
+        else append("Be clear and well organised; use short paragraphs or numbered lines. Use code blocks only when writing code. ")
+        append("If you are not sure about a fact, say so instead of guessing.")
+    }
+
+    suspend fun generate(
+        apiKey: String, model: String, history: List<ChatMessage>, voice: Boolean
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            // Gemini wants alternating roles starting with "user": merge same-role neighbours.
+            val merged = mutableListOf<Pair<String, String>>()
+            history.takeLast(24).dropWhile { it.role != "user" }.forEach { m ->
+                val last = merged.lastOrNull()
+                if (last != null && last.first == m.role) {
+                    merged[merged.lastIndex] = last.first to (last.second + "\n" + m.text)
+                } else merged.add(m.role to m.text)
+            }
+            val contents = JSONArray()
+            merged.forEach { (role, text) ->
+                contents.put(
+                    JSONObject().put("role", role)
+                        .put("parts", JSONArray().put(JSONObject().put("text", text)))
+                )
+            }
+            val body = JSONObject()
+                .put("systemInstruction", JSONObject().put("parts",
+                    JSONArray().put(JSONObject().put("text", systemPrompt(voice)))))
+                .put("contents", contents)
+
+            val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("x-goog-api-key", apiKey)
+            }
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            conn.disconnect()
+
+            if (code !in 200..299) Result.failure(Exception(friendly(code, raw)))
+            else Result.success(parse(raw))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            Result.failure(Exception("Internet connection में दिक्कत है। Network check करके दोबारा कोशिश करें।"))
+        } catch (e: Exception) {
+            Result.failure(Exception(e.message ?: "कुछ गड़बड़ हो गई।"))
+        }
+    }
+
+    private fun parse(raw: String): String {
+        val root = JSONObject(raw)
+        val cands = root.optJSONArray("candidates")
+        if (cands == null || cands.length() == 0) {
+            val reason = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+            throw Exception("Gemini ने जवाब नहीं दिया" + if (reason.isNotBlank()) " ($reason)।" else "।")
+        }
+        val cand = cands.getJSONObject(0)
+        val parts = cand.optJSONObject("content")?.optJSONArray("parts")
+        val sb = StringBuilder()
+        if (parts != null) for (i in 0 until parts.length()) sb.append(parts.getJSONObject(i).optString("text"))
+        if (sb.isBlank()) throw Exception("खाली जवाब मिला (${cand.optString("finishReason")})।")
+        return sb.toString().trim()
+    }
+
+    private fun friendly(code: Int, raw: String): String {
+        val detail = try { JSONObject(raw).getJSONObject("error").optString("message") } catch (e: Exception) { "" }
+        val head = when (code) {
+            400 -> if (detail.contains("API key", true)) "API key सही नहीं है। Settings में जाँचिए।" else "Request में गड़बड़ है।"
+            401, 403 -> "API key को permission नहीं मिली। Key जाँचिए।"
+            404 -> "Model का नाम सही नहीं है। Settings में model बदलिए (जैसे gemini-2.5-flash)।"
+            429 -> "Free limit पूरी हो गई। थोड़ी देर बाद कोशिश करें।"
+            in 500..599 -> "Gemini server अभी busy है। थोड़ी देर बाद कोशिश करें।"
+            else -> "Error $code"
+        }
+        return if (detail.isNotBlank()) "$head\n($detail)" else head
+    }
+}
