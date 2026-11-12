@@ -11,8 +11,8 @@ android {
         applicationId = "com.vidya.ai"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.6.0"
+        versionCode = 8
+        versionName = "0.6.1"
     }
     signingConfigs {
         // One fixed key committed in the repo, so every build can be installed
@@ -37,8 +37,10 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Signed with the same committed key so it installs over the debug build.
+            // Minify stays off: R8 without keep-rules breaks Compose + reflection.
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {

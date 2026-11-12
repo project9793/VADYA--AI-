@@ -27,13 +27,15 @@ jobs:
           gradle-version: '8.7'
 
       - name: Assemble debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK as build artifact
         uses: actions/upload-artifact@v4
         with:
           name: vidyaai-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       - name: Publish APK to GitHub Release
@@ -48,5 +50,7 @@ jobs:
             Direct download: https://github.com/project9793/VADYA--AI-/releases/latest/download/app-debug.apk
 
             Built automatically from the latest commit on main.
-          files: app/build/outputs/apk/debug/app-debug.apk
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release.apk
           fail_on_unmatched_files: true
