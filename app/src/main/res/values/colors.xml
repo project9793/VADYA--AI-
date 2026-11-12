@@ -1,6 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="vidya_ink">#FF0B1020</color>
-    <color name="vidya_violet">#FF7C5CFF</color>
-    <color name="ic_launcher_background">#FF0B1020</color>
+    <color name="vidya_bg">#FF14194F</color>
+    <color name="vidya_splash_bg">#FF101B52</color>
 </resources>

@@ -17,6 +17,7 @@ import androidx.lifecycle.viewModelScope
 import com.vidya.ai.core.GeminiClient
 import com.vidya.ai.core.GeminiSpeaker
 import com.vidya.ai.core.LangUtil
+import com.vidya.ai.core.Languages
 import com.vidya.ai.core.MicPermission
 import com.vidya.ai.core.NetworkMonitor
 import com.vidya.ai.core.SecureStore
@@ -24,6 +25,7 @@ import com.vidya.ai.core.VoiceRecorder
 import com.vidya.ai.data.ChatMessage
 import com.vidya.ai.data.ChatRepository
 import com.vidya.ai.data.Conversation
+import com.vidya.ai.data.MemoryRepository
 import com.vidya.ai.ui.components.OrbState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -54,6 +60,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val store = SecureStore(app)
     private val repo = ChatRepository(app)
+    private val memory = MemoryRepository(store)
     private val gemini = GeminiClient()
     private val speaker = GeminiSpeaker()
     private val recorder = VoiceRecorder()
@@ -112,6 +119,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun send(text: String, voice: Boolean) {
         val msg = text.trim()
         if (msg.isEmpty()) return
+        maybeSaveMemory(msg)
         val key = store.geminiKey
         if (key.isBlank()) {
             _ui.update { it.copy(orb = OrbState.Idle, error = "पहले Settings में Gemini API key डालिए।") }
@@ -132,7 +140,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
         job?.cancel()
         job = viewModelScope.launch {
-            gemini.generate(key, store.model, withUser.messages, voice)
+            gemini.generate(key, store.model, withUser.messages, voice, buildContext(), store.searchEnabled)
                 .onSuccess { reply ->
                     val t = System.currentTimeMillis()
                     val c = _ui.value.conv
@@ -148,6 +156,37 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                     _ui.update { it.copy(busy = false, orb = OrbState.Idle, error = e.message ?: "Error") }
                 }
         }
+    }
+
+    /** Date/time, names, language and memories that are sent with every request. */
+    private fun buildContext(): String {
+        val now = SimpleDateFormat("EEEE, d MMMM yyyy, hh:mm a", Locale.ENGLISH).format(Date())
+        return buildString {
+            append("Current date and time on the user's device: $now (${TimeZone.getDefault().id}). ")
+            append("Use it for any question about today's date or time. ")
+            append("The user has named you \"${store.assistantName}\"; introduce yourself by that name. ")
+            if (store.userName.isNotBlank()) append("The user's name is ${store.userName}. ")
+            append("The user's preferred language is ${Languages.label(store.sttLang)}. ")
+            if (store.searchEnabled) append("For news, prices, scores, weather or anything recent, use Google Search. ")
+            if (store.memoryEnabled) {
+                val m = memory.all().takeLast(30)
+                if (m.isNotEmpty()) {
+                    append("Things the user asked you to remember: ")
+                    m.forEach { append("- ").append(it.text).append(" ") }
+                }
+            }
+        }
+    }
+
+    private val rememberRegex = Regex(
+        "^(याद रखो|yaad rakho|remember that|remember)\\s*[:,\\-]?\\s+(.+)$",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    private fun maybeSaveMemory(msg: String) {
+        if (!store.memoryEnabled) return
+        val m = rememberRegex.find(msg) ?: return
+        memory.add(m.groupValues[2].trim())
     }
 
     fun regenerate() {

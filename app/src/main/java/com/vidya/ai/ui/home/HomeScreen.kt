@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vidya.ai.ui.assistant.AssistantViewModel
+import com.vidya.ai.ui.tools.ToolsViewModel
 import com.vidya.ai.ui.common.rememberMicAction
 import com.vidya.ai.ui.components.AiOrb
 import com.vidya.ai.ui.components.OrbState
@@ -25,7 +26,7 @@ import com.vidya.ai.ui.theme.VidyaCyan
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
+fun HomeScreen(vm: AssistantViewModel, tools: ToolsViewModel, onOpenChat: () -> Unit) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val online by vm.online.collectAsStateWithLifecycle()
     var text by remember { mutableStateOf("") }
@@ -39,6 +40,11 @@ fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
         OrbState.Listening -> "सुन रही हूँ…"
         OrbState.Thinking -> "सोच रही हूँ…"
         OrbState.Speaking -> "बोल रही हूँ…"
+    }
+    val greet = buildString {
+        append("नमस्ते")
+        if (tools.userName.isNotBlank()) append(" ${tools.userName}")
+        append("! मैं ${tools.assistantName} हूँ। आज मैं आपकी कैसे मदद करूँ?")
     }
     val msgs = ui.conv.messages
     val lastUser = msgs.lastOrNull { it.role == "user" }
@@ -58,7 +64,7 @@ fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
         Text("VIDYA AI", style = MaterialTheme.typography.headlineLarge, color = VidyaCyan)
         Text("Your Voice. Your Intelligence. Your Personal AI.", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text("नमस्ते! आज मैं आपकी कैसे मदद करूँ?", style = MaterialTheme.typography.titleMedium)
+        Text(greet, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
 
         Spacer(Modifier.height(8.dp))
         AiOrb(

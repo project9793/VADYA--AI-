@@ -26,6 +26,26 @@ class SecureStore(context: Context) {
         get() = sanitizeModel(prefs.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL)
         set(v) = prefs.edit().putString("model", sanitizeModel(v)).apply()
 
+    var userName: String
+        get() = prefs.getString("user_name", "") ?: ""
+        set(v) = prefs.edit().putString("user_name", v).apply()
+
+    var assistantName: String
+        get() = (prefs.getString("assistant_name", DEFAULT_ASSISTANT) ?: DEFAULT_ASSISTANT).ifBlank { DEFAULT_ASSISTANT }
+        set(v) = prefs.edit().putString("assistant_name", v).apply()
+
+    var memoryEnabled: Boolean
+        get() = prefs.getBoolean("memory_enabled", true)
+        set(v) = prefs.edit().putBoolean("memory_enabled", v).apply()
+
+    var searchEnabled: Boolean
+        get() = prefs.getBoolean("search_enabled", true)
+        set(v) = prefs.edit().putBoolean("search_enabled", v).apply()
+
+    var memoryJson: String
+        get() = prefs.getString("memory", "[]") ?: "[]"
+        set(v) = prefs.edit().putString("memory", v).apply()
+
     /** BCP-47 tag used for speech recognition, e.g. hi-IN */
     var sttLang: String
         get() = prefs.getString("stt_lang", "hi-IN") ?: "hi-IN"
@@ -51,6 +71,7 @@ class SecureStore(context: Context) {
 
     companion object {
         const val DEFAULT_MODEL = "gemini-2.5-flash"
+        const val DEFAULT_ASSISTANT = "विद्या"
 
         fun sanitizeModel(s: String): String {
             val c = s.trim().removePrefix("models/").lowercase()

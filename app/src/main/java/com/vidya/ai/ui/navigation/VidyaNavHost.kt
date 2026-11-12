@@ -7,37 +7,49 @@ import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.*
 import com.vidya.ai.ui.assistant.AssistantViewModel
 import com.vidya.ai.ui.chat.ChatScreen
-import com.vidya.ai.ui.common.ComingSoonScreen
 import com.vidya.ai.ui.history.HistoryScreen
 import com.vidya.ai.ui.home.HomeScreen
 import com.vidya.ai.ui.settings.SettingsScreen
+import com.vidya.ai.ui.tools.AccountScreen
+import com.vidya.ai.ui.tools.ApiKeyScreen
+import com.vidya.ai.ui.tools.AssistantNameScreen
+import com.vidya.ai.ui.tools.LanguageScreen
+import com.vidya.ai.ui.tools.MemoryScreen
+import com.vidya.ai.ui.tools.ToolRoutes
+import com.vidya.ai.ui.tools.ToolsHomeScreen
+import com.vidya.ai.ui.tools.ToolsViewModel
+import com.vidya.ai.ui.tools.VoiceScreen
+import com.vidya.ai.ui.theme.VidyaViolet
 
 private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "Home", Icons.Default.Home),
     Chat("chat", "Chat", Icons.Default.Chat),
     History("history", "History", Icons.Default.History),
-    Tools("tools", "Tools", Icons.Default.Build),
+    Tools(ToolRoutes.Home, "Tools", Icons.Default.Build),
     Settings("settings", "Settings", Icons.Default.Settings)
 }
 
 @Composable
 fun VidyaNavHost() {
     val vm: AssistantViewModel = viewModel()
+    val tools: ToolsViewModel = viewModel()
 
+    // Google's voice window (fallback speech input)
     val dialogLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { r ->
@@ -60,6 +72,7 @@ fun VidyaNavHost() {
             }
         }
     }
+
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination?.route
@@ -71,20 +84,31 @@ fun VidyaNavHost() {
             restoreState = true
         }
     }
+    fun open(route: String) {
+        nav.navigate(route) { launchSingleTop = true }
+    }
+    val back: () -> Unit = { nav.popBackStack() }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = Color(0xF00D1650)) {
                 Tab.entries.forEach { tab ->
                     NavigationBarItem(
-                        selected = current == tab.route,
+                        selected = current == tab.route || current?.startsWith(tab.route + "/") == true,
                         onClick = { go(tab.route) },
                         icon = { Icon(tab.icon, contentDescription = tab.label) },
                         label = {
                             Text(tab.label, maxLines = 1, softWrap = false,
                                 style = MaterialTheme.typography.labelSmall)
-                        }
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.White,
+                            selectedTextColor = Color.White,
+                            indicatorColor = VidyaViolet.copy(alpha = 0.55f),
+                            unselectedIconColor = Color(0xFFB8C2FF),
+                            unselectedTextColor = Color(0xFFB8C2FF)
+                        )
                     )
                 }
             }
@@ -94,11 +118,17 @@ fun VidyaNavHost() {
             nav, startDestination = Tab.Home.route,
             modifier = Modifier.padding(padding).consumeWindowInsets(padding)
         ) {
-            composable(Tab.Home.route) { HomeScreen(vm, onOpenChat = { go(Tab.Chat.route) }) }
+            composable(Tab.Home.route) { HomeScreen(vm, tools, onOpenChat = { go(Tab.Chat.route) }) }
             composable(Tab.Chat.route) { ChatScreen(vm) }
             composable(Tab.History.route) { HistoryScreen(vm, onOpen = { go(Tab.Chat.route) }) }
-            composable(Tab.Tools.route) { ComingSoonScreen("Tools", "Phase 8–10") }
-            composable(Tab.Settings.route) { SettingsScreen() }
+            composable(ToolRoutes.Home) { ToolsHomeScreen(tools, onOpen = { open(it) }) }
+            composable(ToolRoutes.Account) { AccountScreen(tools, back) }
+            composable(ToolRoutes.Assistant) { AssistantNameScreen(tools, back) }
+            composable(ToolRoutes.Voice) { VoiceScreen(tools, back) }
+            composable(ToolRoutes.Language) { LanguageScreen(tools, back) }
+            composable(ToolRoutes.Memory) { MemoryScreen(tools, back) }
+            composable(ToolRoutes.Keys) { ApiKeyScreen(tools, back) }
+            composable(Tab.Settings.route) { SettingsScreen(tools) }
         }
     }
 }

@@ -11,8 +11,8 @@ android {
         applicationId = "com.vidya.ai"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "0.8.0"
+        versionCode = 11
+        versionName = "0.9.0"
     }
     signingConfigs {
         // One fixed key committed in the repo, so every build can be installed
@@ -54,6 +54,7 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))

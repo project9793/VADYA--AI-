@@ -13,6 +13,9 @@ object LangUtil {
                 Character.UnicodeBlock.TAMIL -> "ta-IN"
                 Character.UnicodeBlock.TELUGU -> "te-IN"
                 Character.UnicodeBlock.GUJARATI -> "gu-IN"
+                Character.UnicodeBlock.MALAYALAM -> "ml-IN"
+                Character.UnicodeBlock.KANNADA -> "kn-IN"
+                Character.UnicodeBlock.ORIYA -> "or-IN"
                 Character.UnicodeBlock.GURMUKHI -> "pa-IN"
                 Character.UnicodeBlock.ARABIC -> if (sttLang.startsWith("ur")) "ur-IN" else "ar-SA"
                 Character.UnicodeBlock.HIRAGANA, Character.UnicodeBlock.KATAKANA -> "ja-JP"
@@ -27,6 +30,7 @@ object LangUtil {
     }
 
     fun stripMarkdown(s: String): String = s
+        .substringBefore("\n\nस्रोत:")
         .replace(Regex("```[\\s\\S]*?```"), " ")
         .replace(Regex("(?m)^\\s*[-•]\\s+"), "")
         .replace(Regex("[*#`]"), "")

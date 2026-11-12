@@ -122,7 +122,7 @@ private fun Bubble(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = if (user) VidyaViolet.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surface,
+            color = if (user) VidyaViolet.copy(alpha = 0.80f) else Color(0x40FFFFFF),
             modifier = Modifier.widthIn(max = 320.dp)
         ) {
             Column(Modifier.padding(12.dp)) {
