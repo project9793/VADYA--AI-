@@ -164,12 +164,12 @@ fun VoiceScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = tools.ttsEngine == "gemini",
-                        onClick = { tools.setTtsEngine("gemini") },
+                        onClick = { tools.updateTtsEngine("gemini") },
                         label = { Text("Gemini voice (सुझाया)") }
                     )
                     FilterChip(
                         selected = tools.ttsEngine == "android",
-                        onClick = { tools.setTtsEngine("android") },
+                        onClick = { tools.updateTtsEngine("android") },
                         label = { Text("फ़ोन की आवाज़") }
                     )
                 }
@@ -183,7 +183,7 @@ fun VoiceScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                         TTS_VOICES.forEach { v ->
                             FilterChip(
                                 selected = tools.ttsVoice == v,
-                                onClick = { tools.setTtsVoice(v) },
+                                onClick = { tools.updateTtsVoice(v) },
                                 label = { Text(v) }
                             )
                         }
@@ -215,7 +215,7 @@ fun LanguageScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                     Languages.all.forEach { (label, tag) ->
                         FilterChip(
                             selected = tools.sttLang == tag,
-                            onClick = { tools.setLang(tag) },
+                            onClick = { tools.updateLang(tag) },
                             label = { Text(label) }
                         )
                     }
@@ -241,7 +241,7 @@ fun MemoryScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                     Text("AI इन बातों को याद रखकर जवाब देगा। बोलकर भी कह सकते हैं: \"याद रखो, मुझे चाय पसंद है\"।",
                         style = MaterialTheme.typography.bodySmall)
                 }
-                Switch(checked = tools.memoryEnabled, onCheckedChange = tools::setMemoryEnabled)
+                Switch(checked = tools.memoryEnabled, onCheckedChange = tools::updateMemoryEnabled)
             }
         }
         Card(Modifier.fillMaxWidth()) {

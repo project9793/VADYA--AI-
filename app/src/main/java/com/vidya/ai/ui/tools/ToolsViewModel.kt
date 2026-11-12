@@ -41,12 +41,12 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
         store.assistantName = v.trim().ifBlank { SecureStore.DEFAULT_ASSISTANT }
         assistantName = store.assistantName
     }
-    fun setTtsEngine(v: String) { store.ttsEngine = v; ttsEngine = v }
-    fun setTtsVoice(v: String) { store.ttsVoice = v; ttsVoice = v }
-    fun setLang(v: String) { store.sttLang = v; sttLang = v }
-    fun setVoiceEngine(v: String) { store.voiceEngine = v; voiceEngine = v }
-    fun setSearchEnabled(v: Boolean) { store.searchEnabled = v; searchEnabled = v }
-    fun setMemoryEnabled(v: Boolean) { store.memoryEnabled = v; memoryEnabled = v }
+    fun updateTtsEngine(v: String) { store.ttsEngine = v; ttsEngine = v }
+    fun updateTtsVoice(v: String) { store.ttsVoice = v; ttsVoice = v }
+    fun updateLang(v: String) { store.sttLang = v; sttLang = v }
+    fun updateVoiceEngine(v: String) { store.voiceEngine = v; voiceEngine = v }
+    fun updateSearchEnabled(v: Boolean) { store.searchEnabled = v; searchEnabled = v }
+    fun updateMemoryEnabled(v: Boolean) { store.memoryEnabled = v; memoryEnabled = v }
 
     fun saveGemini(key: String) { store.geminiKey = key.trim(); hasGeminiKey = store.geminiKey.isNotBlank() }
     fun saveSearch(key: String) { store.searchKey = key.trim() }

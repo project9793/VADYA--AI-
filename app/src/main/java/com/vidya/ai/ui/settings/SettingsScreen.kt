@@ -79,7 +79,7 @@ fun SettingsScreen(tools: ToolsViewModel) {
                     ENGINES.forEach { (label, key) ->
                         FilterChip(
                             selected = tools.voiceEngine == key,
-                            onClick = { tools.setVoiceEngine(key) },
+                            onClick = { tools.updateVoiceEngine(key) },
                             label = { Text(label) }
                         )
                     }
@@ -96,7 +96,7 @@ fun SettingsScreen(tools: ToolsViewModel) {
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                Switch(checked = tools.searchEnabled, onCheckedChange = tools::setSearchEnabled)
+                Switch(checked = tools.searchEnabled, onCheckedChange = tools::updateSearchEnabled)
             }
         }
 
