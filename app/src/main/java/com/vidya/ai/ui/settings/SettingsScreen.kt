@@ -93,6 +93,16 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             hint = "Default: gemini-2.5-flash. Error आए तो gemini-3.5-flash या gemini-3.1-flash-lite आज़माइए।",
             initial = vm.savedModel, secret = false, onSave = vm::saveModel
         )
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Connection test", style = MaterialTheme.typography.titleMedium)
+                Text("Gemini से connection और API key जाँचता है।", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = vm::runTest, enabled = !vm.testing) {
+                    Text(if (vm.testing) "जाँच हो रही है…" else "Test करें")
+                }
+                if (vm.testResult.isNotBlank()) Text(vm.testResult)
+            }
+        }
         KeyCard(
             title = "Search API key",
             hint = "Internet search (Phase 7) के लिए। अभी सिर्फ़ सुरक्षित रखी जाती है।",

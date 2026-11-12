@@ -8,6 +8,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.net.URL
 
 class GeminiClient {
@@ -64,11 +68,44 @@ class GeminiClient {
             else Result.success(parse(raw))
         } catch (e: CancellationException) {
             throw e
+        } catch (e: UnknownHostException) {
+            Result.failure(Exception("Gemini server का पता नहीं मिल रहा (DNS)। VPN / Private DNS / ad-block बंद करें, या WiFi ↔ mobile data बदलकर देखें। फिर Settings → Connection test चलाइए।"))
+        } catch (e: SocketTimeoutException) {
+            Result.failure(Exception("Server से जवाब आने में बहुत देर लगी (timeout)। Network slow है, दोबारा कोशिश करें।"))
+        } catch (e: SSLException) {
+            Result.failure(Exception("सुरक्षित connection (SSL) नहीं बन पाया। फ़ोन की date/time जाँचें और VPN/proxy बंद करें।"))
         } catch (e: IOException) {
-            Result.failure(Exception("Internet connection में दिक्कत है। Network check करके दोबारा कोशिश करें।"))
+            Result.failure(Exception("Network error: ${e.javaClass.simpleName}: ${e.message}"))
         } catch (e: Exception) {
             Result.failure(Exception(e.message ?: "कुछ गड़बड़ हो गई।"))
         }
+    }
+
+    /** Step-by-step connection check shown in Settings. */
+    suspend fun diagnose(apiKey: String): String = withContext(Dispatchers.IO) {
+        val host = "generativelanguage.googleapis.com"
+        val sb = StringBuilder()
+        try {
+            sb.append("1) DNS ठीक: ${InetAddress.getByName(host).hostAddress}\n")
+        } catch (e: Exception) {
+            return@withContext "1) DNS फ़ेल (${e.javaClass.simpleName})। Server का पता नहीं मिला। VPN / Private DNS बंद करें या दूसरा network आज़माएँ।"
+        }
+        try {
+            val conn = (URL("https://$host/v1beta/models?pageSize=1").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                setRequestProperty("x-goog-api-key", apiKey)
+            }
+            val code = conn.responseCode
+            val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            conn.disconnect()
+            sb.append("2) HTTP $code\n")
+            if (code in 200..299) sb.append("✔ Connection और API key दोनों ठीक हैं।") else sb.append(friendly(code, raw))
+        } catch (e: Exception) {
+            sb.append("2) Connect फ़ेल: ${e.javaClass.simpleName}: ${e.message}")
+        }
+        sb.toString()
     }
 
     private fun parse(raw: String): String {

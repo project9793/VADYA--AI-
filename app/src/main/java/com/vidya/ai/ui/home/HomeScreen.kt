@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vidya.ai.ui.assistant.AssistantViewModel
@@ -48,7 +49,7 @@ fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("VIDYA AI", style = MaterialTheme.typography.headlineLarge, color = VidyaCyan)
-        Text("Your Voice. Your Intelligence. Your Personal AI.", style = MaterialTheme.typography.bodySmall)
+        Text("Your Voice. Your Intelligence. Your Personal AI.", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text("नमस्ते! आज मैं आपकी कैसे मदद करूँ?", style = MaterialTheme.typography.titleMedium)
 
@@ -63,7 +64,7 @@ fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
             )
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
             AssistChip(onClick = {}, label = { Text(statusText) })
             AssistChip(
                 onClick = {},
@@ -76,7 +77,7 @@ fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
             FilterChip(
                 selected = ui.handsFree,
                 onClick = vm::toggleHandsFree,
-                label = { Text("Hands-free") }
+                label = { Text("Hands-free", maxLines = 1, softWrap = false) }
             )
         }
 
