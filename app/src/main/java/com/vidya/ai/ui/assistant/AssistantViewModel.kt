@@ -19,6 +19,7 @@ import com.vidya.ai.core.LangUtil
 import com.vidya.ai.core.MicPermission
 import com.vidya.ai.core.NetworkMonitor
 import com.vidya.ai.core.SecureStore
+import com.vidya.ai.core.VoiceRecorder
 import com.vidya.ai.data.ChatMessage
 import com.vidya.ai.data.ChatRepository
 import com.vidya.ai.data.Conversation
@@ -76,6 +77,9 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(error = "In-app mic नहीं चला, इसलिए Google की voice window से सुन रही हूँ।") }
         startListening()
     }
+
+    private val recorder = VoiceRecorder()
+    private var recJob: Job? = null
 
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
@@ -204,7 +208,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun toggleMic() {
         when (_ui.value.orb) {
-            OrbState.Listening -> recognizer?.stopListening()
+            OrbState.Listening ->
+                if (store.voiceEngine == "gemini") recorder.finish() else recognizer?.stopListening()
             OrbState.Speaking -> { tts?.stop(); startListening() }   // interrupt the AI
             OrbState.Thinking -> stop()
             OrbState.Idle -> startListening()
@@ -213,9 +218,43 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun stop() {
         job?.cancel()
+        recJob?.cancel()
         tts?.stop()
         recognizer?.cancel()
         _ui.update { it.copy(orb = OrbState.Idle, busy = false, partial = "") }
+    }
+
+    /** Default voice path: record with our own mic permission, Gemini transcribes. */
+    private fun startRecording() {
+        val key = store.geminiKey
+        if (key.isBlank()) { showError("पहले Settings में Gemini API key डालिए।"); return }
+        if (!MicPermission.has(app)) { showError("Mic permission चाहिए। Settings tab में दें।"); return }
+        recJob?.cancel()
+        _ui.update { it.copy(orb = OrbState.Listening, partial = "", error = null) }
+        recJob = viewModelScope.launch {
+            val rec = recorder.record()
+            val wav = rec.wav
+            if (wav == null) {
+                _ui.update { it.copy(orb = OrbState.Idle, partial = "", error = rec.error) }
+                return@launch
+            }
+            _ui.update { it.copy(orb = OrbState.Thinking, busy = true, partial = "") }
+            gemini.transcribe(key, store.model, wav, store.sttLang)
+                .onSuccess { text ->
+                    val t = text.trim()
+                    if (t.isBlank() || t.contains("NO_SPEECH")) {
+                        _ui.update {
+                            it.copy(orb = OrbState.Idle, busy = false, error = "आवाज़ साफ़ नहीं सुनाई दी। दोबारा बोलिए।")
+                        }
+                    } else {
+                        _ui.update { it.copy(busy = false) }
+                        send(t, voice = true)
+                    }
+                }
+                .onFailure { e ->
+                    _ui.update { it.copy(orb = OrbState.Idle, busy = false, error = e.message ?: "Error") }
+                }
+        }
     }
 
     private var sttAttempt = 0
@@ -232,6 +271,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     private fun startListening(attempt: Int = 0) {
+        if (store.voiceEngine == "gemini") { startRecording(); return }
         if (store.useDialog) {
             _ui.update { it.copy(orb = OrbState.Listening, partial = "") }
             _dialogEvents.trySend(Unit)

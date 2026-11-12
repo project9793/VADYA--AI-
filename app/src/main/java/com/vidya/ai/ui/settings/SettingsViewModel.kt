@@ -21,6 +21,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         get() = store.sttLang
         set(v) { store.sttLang = v }
 
+    var voiceEngine: String
+        get() = store.voiceEngine
+        set(v) { store.voiceEngine = v }
+
     var useDialog: Boolean
         get() = store.useDialog
         set(v) { store.useDialog = v }

@@ -23,12 +23,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vidya.ai.core.MicPermission
+import com.vidya.ai.core.SecureStore
 
 private val LANGS = listOf(
     "हिन्दी" to "hi-IN", "English" to "en-IN", "বাংলা" to "bn-IN", "தமிழ்" to "ta-IN",
     "తెలుగు" to "te-IN", "मराठी" to "mr-IN", "ગુજરાતી" to "gu-IN", "ਪੰਜਾਬੀ" to "pa-IN",
     "اردو" to "ur-IN", "नेपाली" to "ne-NP", "Español" to "es-ES", "Français" to "fr-FR",
     "Deutsch" to "de-DE", "العربية" to "ar-SA", "日本語" to "ja-JP", "中文" to "zh-CN"
+)
+
+private val ENGINES = listOf(
+    "Gemini (सुझाया)" to "gemini",
+    "Google in-app" to "google",
+    "Google window" to "window"
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -41,7 +48,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
         ActivityResultContracts.RequestPermission()
     ) { micGranted = it }
     var lang by remember { mutableStateOf(vm.sttLang) }
-    var useDialog by remember { mutableStateOf(vm.useDialog) }
+    var engine by remember { mutableStateOf(vm.voiceEngine) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -53,14 +60,6 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Microphone", style = MaterialTheme.typography.titleMedium)
                 Text(if (micGranted) "✔ Permission मिल चुकी है" else "Permission अभी नहीं दी गई")
-                OutlinedButton(onClick = {
-                    ctx.startActivity(
-                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            Uri.fromParts("package", "com.google.android.googlequicksearchbox", null))
-                    )
-                }) { Text("Google app की mic permission जाँचें") }
-                Text("बोलना सुनने का काम Google app करता है, इसलिए उसे भी Microphone allow होना चाहिए।",
-                    style = MaterialTheme.typography.bodySmall)
                 if (!micGranted) {
                     Button(onClick = { launcher.launch(android.Manifest.permission.RECORD_AUDIO) }) {
                         Text("Mic permission दें")
@@ -72,13 +71,41 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         )
                     }) { Text("App settings खोलें") }
                 }
+                if (engine != "gemini") {
+                    OutlinedButton(onClick = {
+                        ctx.startActivity(
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", "com.google.android.googlequicksearchbox", null))
+                        )
+                    }) { Text("Google app की mic permission जाँचें") }
+                }
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Voice engine (सुनने का तरीका)", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Gemini: app खुद आवाज़ record करता है और Gemini उसे text बनाता है। " +
+                        "Google की speech service पर निर्भर नहीं, और कई भाषाएँ समझता है।",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ENGINES.forEach { (label, key) ->
+                        FilterChip(
+                            selected = engine == key,
+                            onClick = { engine = key; vm.voiceEngine = key },
+                            label = { Text(label) }
+                        )
+                    }
+                }
             }
         }
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("बोलने की भाषा (Voice language)", style = MaterialTheme.typography.titleMedium)
-                Text("Speech recognition इसी भाषा में सुनेगा। AI का जवाब आपकी भाषा में ही आएगा।",
+                Text("आप जिस भाषा में बोलेंगे वह चुनिए। AI का जवाब आपकी भाषा में ही आएगा।",
                     style = MaterialTheme.typography.bodySmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LANGS.forEach { (label, tag) ->
@@ -92,17 +119,6 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
         }
 
-        Card(Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Google voice window से बोलें", style = MaterialTheme.typography.titleMedium)
-                    Text("In-app mic में error आए तो इसे चालू करें। (error आने पर app इसे खुद चालू कर देता है)",
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = useDialog, onCheckedChange = { useDialog = it; vm.useDialog = it })
-            }
-        }
-
         KeyCard(
             title = "Gemini API key",
             hint = "Google AI Studio (aistudio.google.com) से key बनाइए।",
@@ -110,9 +126,11 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
         )
         KeyCard(
             title = "Gemini model",
-            hint = "Default: gemini-2.5-flash. Error आए तो gemini-3.5-flash या gemini-3.1-flash-lite आज़माइए।",
-            initial = vm.savedModel, secret = false, onSave = vm::saveModel
+            hint = "Default: ${SecureStore.DEFAULT_MODEL}। नाम में space या extra शब्द न डालें।",
+            initial = vm.savedModel, secret = false, onSave = vm::saveModel,
+            resetValue = SecureStore.DEFAULT_MODEL
         )
+
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Connection test", style = MaterialTheme.typography.titleMedium)
@@ -123,21 +141,20 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                 if (vm.testResult.isNotBlank()) Text(vm.testResult)
             }
         }
+
         KeyCard(
             title = "Search API key",
             hint = "Internet search (Phase 7) के लिए। अभी सिर्फ़ सुरक्षित रखी जाती है।",
             initial = vm.savedSearch, secret = true, onSave = vm::saveSearch
         )
-        Text(
-            "Keys इस फ़ोन में encrypted रहती हैं।",
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text("Keys इस फ़ोन में encrypted रहती हैं।", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
 private fun KeyCard(
-    title: String, hint: String, initial: String, secret: Boolean, onSave: (String) -> Unit
+    title: String, hint: String, initial: String, secret: Boolean,
+    onSave: (String) -> Unit, resetValue: String? = null
 ) {
     var value by remember { mutableStateOf(initial) }
     var visible by remember { mutableStateOf(!secret) }
@@ -165,6 +182,9 @@ private fun KeyCard(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { onSave(value); saved = true }, enabled = !saved) { Text("Save") }
+                if (resetValue != null) {
+                    TextButton(onClick = { value = resetValue; onSave(resetValue); saved = true }) { Text("Default") }
+                }
                 if (saved && value.isNotBlank()) Text("✔ Saved")
             }
         }

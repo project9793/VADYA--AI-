@@ -1,5 +1,6 @@
 package com.vidya.ai.core
 
+import android.util.Base64
 import com.vidya.ai.data.ChatMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +27,7 @@ class GeminiClient {
         append("If you are not sure about a fact, say so instead of guessing.")
     }
 
-    private fun buildBody(history: List<ChatMessage>, voice: Boolean): String {
+    private fun chatBody(history: List<ChatMessage>, voice: Boolean): String {
         // Gemini wants alternating roles starting with "user": merge same-role neighbours.
         val merged = mutableListOf<Pair<String, String>>()
         history.takeLast(24).dropWhile { it.role != "user" }.forEach { m ->
@@ -49,6 +50,27 @@ class GeminiClient {
             .toString()
     }
 
+    suspend fun generate(
+        apiKey: String, model: String, history: List<ChatMessage>, voice: Boolean
+    ): Result<String> = run(apiKey, model, chatBody(history, voice))
+
+    /** Speech-to-text using Gemini audio understanding (works without Google's speech service). */
+    suspend fun transcribe(apiKey: String, model: String, wav: ByteArray, lang: String): Result<String> {
+        val prompt = "Transcribe this audio exactly as spoken. Keep the original language " +
+            "(write Hindi in Devanagari script, other Indian languages in their own script). " +
+            "The speaker most likely uses language tag $lang. " +
+            "Output ONLY the transcript, with no quotes or comments. " +
+            "If there is no clear human speech, output exactly [NO_SPEECH]."
+        val b64 = Base64.encodeToString(wav, Base64.NO_WRAP)
+        val body = JSONObject().put("contents", JSONArray().put(
+            JSONObject().put("role", "user").put("parts", JSONArray()
+                .put(JSONObject().put("inline_data",
+                    JSONObject().put("mime_type", "audio/wav").put("data", b64)))
+                .put(JSONObject().put("text", prompt)))
+        )).toString()
+        return run(apiKey, model, body)
+    }
+
     private fun post(apiKey: String, model: String, body: String): Pair<Int, String> {
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
         val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -68,47 +90,48 @@ class GeminiClient {
     }
 
     /**
-     * Tries the chosen model first. If the server is busy (5xx) it retries once,
-     * and if a model is busy / over quota / missing it falls back to lighter models.
+     * Tries the chosen model first. If the server is busy (5xx) it retries once;
+     * if a model is busy / over quota / misspelt it falls back to lighter models.
      */
-    suspend fun generate(
-        apiKey: String, model: String, history: List<ChatMessage>, voice: Boolean
-    ): Result<String> = withContext(Dispatchers.IO) {
-        val models = listOf(model, "gemini-2.5-flash-lite", "gemini-3.1-flash-lite").distinct()
-        val body = buildBody(history, voice)
-        var firstError: Exception? = null
-        try {
-            for (m in models) {
-                var attempt = 0
-                while (attempt < 2) {
-                    val (code, raw) = post(apiKey, m, body)
-                    if (code in 200..299) return@withContext Result.success(parse(raw))
-                    if (firstError == null) firstError = Exception(friendly(code, raw))
-                    if (code in 500..504) {
-                        attempt++
-                        if (attempt < 2) delay(1500)
-                    } else if (code == 404 || code == 429) {
-                        break                       // try the next model
-                    } else {
-                        return@withContext Result.failure(Exception(friendly(code, raw)))
+    private suspend fun run(apiKey: String, model: String, body: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            val models = listOf(
+                SecureStore.sanitizeModel(model), "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"
+            ).distinct()
+            var firstError: Exception? = null
+            try {
+                for (m in models) {
+                    var attempt = 0
+                    while (attempt < 2) {
+                        val (code, raw) = post(apiKey, m, body)
+                        if (code in 200..299) return@withContext Result.success(parse(raw))
+                        if (firstError == null) firstError = Exception(friendly(code, raw))
+                        val badModel = code == 400 && raw.contains("GenerateContentRequest.model")
+                        if (code in 500..504) {
+                            attempt++
+                            if (attempt < 2) delay(1500)
+                        } else if (code == 404 || code == 429 || badModel) {
+                            break                       // try the next model
+                        } else {
+                            return@withContext Result.failure(Exception(friendly(code, raw)))
+                        }
                     }
                 }
+                Result.failure(firstError ?: Exception("जवाब नहीं मिला।"))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: UnknownHostException) {
+                Result.failure(Exception("Gemini server का पता नहीं मिल रहा (DNS)। VPN / Private DNS / ad-block बंद करें, या WiFi ↔ mobile data बदलकर देखें।"))
+            } catch (e: SocketTimeoutException) {
+                Result.failure(Exception("Server से जवाब आने में बहुत देर लगी (timeout)। दोबारा कोशिश करें।"))
+            } catch (e: SSLException) {
+                Result.failure(Exception("सुरक्षित connection (SSL) नहीं बन पाया। फ़ोन की date/time जाँचें और VPN/proxy बंद करें।"))
+            } catch (e: IOException) {
+                Result.failure(Exception("Network error: ${e.javaClass.simpleName}: ${e.message}"))
+            } catch (e: Exception) {
+                Result.failure(Exception(e.message ?: "कुछ गड़बड़ हो गई।"))
             }
-            Result.failure(firstError ?: Exception("जवाब नहीं मिला।"))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: UnknownHostException) {
-            Result.failure(Exception("Gemini server का पता नहीं मिल रहा (DNS)। VPN / Private DNS / ad-block बंद करें, या WiFi ↔ mobile data बदलकर देखें।"))
-        } catch (e: SocketTimeoutException) {
-            Result.failure(Exception("Server से जवाब आने में बहुत देर लगी (timeout)। दोबारा कोशिश करें।"))
-        } catch (e: SSLException) {
-            Result.failure(Exception("सुरक्षित connection (SSL) नहीं बन पाया। फ़ोन की date/time जाँचें और VPN/proxy बंद करें।"))
-        } catch (e: IOException) {
-            Result.failure(Exception("Network error: ${e.javaClass.simpleName}: ${e.message}"))
-        } catch (e: Exception) {
-            Result.failure(Exception(e.message ?: "कुछ गड़बड़ हो गई।"))
         }
-    }
 
     /** Step-by-step connection check shown in Settings. */
     suspend fun diagnose(apiKey: String): String = withContext(Dispatchers.IO) {
@@ -155,7 +178,11 @@ class GeminiClient {
     private fun friendly(code: Int, raw: String): String {
         val detail = try { JSONObject(raw).getJSONObject("error").optString("message") } catch (e: Exception) { "" }
         val head = when (code) {
-            400 -> if (detail.contains("API key", true)) "API key सही नहीं है। Settings में जाँचिए।" else "Request में गड़बड़ है।"
+            400 -> when {
+                detail.contains("API key", true) -> "API key सही नहीं है। Settings में जाँचिए।"
+                detail.contains("model", true) -> "Model का नाम गलत है। Settings → Gemini model में \"Default\" दबाइए।"
+                else -> "Request में गड़बड़ है।"
+            }
             401, 403 -> "API key को permission नहीं मिली। Key जाँचिए।"
             404 -> "Model का नाम सही नहीं है। Settings में model बदलिए (जैसे gemini-2.5-flash)।"
             429 -> "Free limit पूरी हो गई। थोड़ी देर बाद कोशिश करें।"

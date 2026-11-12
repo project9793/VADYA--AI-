@@ -23,20 +23,31 @@ class SecureStore(context: Context) {
         set(v) = prefs.edit().putString("search_key", v).apply()
 
     var model: String
-        get() = (prefs.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL).ifBlank { DEFAULT_MODEL }
-        set(v) = prefs.edit().putString("model", v.trim()).apply()
+        get() = sanitizeModel(prefs.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL)
+        set(v) = prefs.edit().putString("model", sanitizeModel(v)).apply()
 
     /** BCP-47 tag used for speech recognition, e.g. hi-IN */
     var sttLang: String
         get() = prefs.getString("stt_lang", "hi-IN") ?: "hi-IN"
         set(v) = prefs.edit().putString("stt_lang", v).apply()
 
-    /** Use Google's voice window instead of the in-app recognizer. */
+    /** "gemini" (record + Gemini transcribes), "google" (in-app recognizer), "window" (Google voice window) */
+    var voiceEngine: String
+        get() = prefs.getString("voice_engine", "gemini") ?: "gemini"
+        set(v) = prefs.edit().putString("voice_engine", v).apply()
+
     var useDialog: Boolean
-        get() = prefs.getBoolean("use_dialog", false)
-        set(v) = prefs.edit().putBoolean("use_dialog", v).apply()
+        get() = voiceEngine == "window"
+        set(v) { voiceEngine = if (v) "window" else "google" }
 
     companion object {
         const val DEFAULT_MODEL = "gemini-2.5-flash"
+
+        fun sanitizeModel(s: String): String {
+            val c = s.trim().removePrefix("models/").lowercase()
+                .replace(Regex("\\s+"), "-")
+                .filter { it.isLetterOrDigit() || it == '-' || it == '.' || it == '_' }
+            return c.ifBlank { DEFAULT_MODEL }
+        }
     }
 }
