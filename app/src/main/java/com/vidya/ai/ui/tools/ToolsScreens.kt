@@ -14,7 +14,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import com.vidya.ai.core.AppPerm
 import com.vidya.ai.core.Languages
+import com.vidya.ai.core.Permissions
 import com.vidya.ai.core.SecureStore
 
 object ToolRoutes {
@@ -25,6 +30,7 @@ object ToolRoutes {
     const val Language = "tools/language"
     const val Memory = "tools/memory"
     const val Keys = "tools/keys"
+    const val Permissions = "tools/permissions"
 }
 
 private val TTS_VOICES = listOf("Kore", "Aoede", "Leda", "Zephyr", "Puck", "Charon", "Fenrir")
@@ -34,6 +40,10 @@ private val TTS_VOICES = listOf("Kore", "Aoede", "Leda", "Zephyr", "Puck", "Char
 @Composable
 fun ToolsHomeScreen(tools: ToolsViewModel, onOpen: (String) -> Unit) {
     LaunchedEffect(Unit) { tools.reloadMemories() }
+    val ctx = LocalContext.current
+    var tick by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
+    val grantedCount = remember(tick) { AppPerm.entries.count { Permissions.isGranted(ctx, it) } }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -57,6 +67,10 @@ fun ToolsHomeScreen(tools: ToolsViewModel, onOpen: (String) -> Unit) {
         ToolCard(Icons.Default.VpnKey, "6. API Key",
             if (tools.hasGeminiKey) "✔ Gemini key सेट है" else "Gemini key नहीं डाली") {
             onOpen(ToolRoutes.Keys)
+        }
+        ToolCard(Icons.Default.Security, "7. Permissions",
+            "$grantedCount / ${AppPerm.entries.size} चालू") {
+            onOpen(ToolRoutes.Permissions)
         }
     }
 }

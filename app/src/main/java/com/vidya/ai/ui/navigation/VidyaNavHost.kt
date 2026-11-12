@@ -30,6 +30,7 @@ import com.vidya.ai.ui.tools.ApiKeyScreen
 import com.vidya.ai.ui.tools.AssistantNameScreen
 import com.vidya.ai.ui.tools.LanguageScreen
 import com.vidya.ai.ui.tools.MemoryScreen
+import com.vidya.ai.ui.tools.PermissionsScreen
 import com.vidya.ai.ui.tools.ToolRoutes
 import com.vidya.ai.ui.tools.ToolsHomeScreen
 import com.vidya.ai.ui.tools.ToolsViewModel
@@ -128,6 +129,7 @@ fun VidyaNavHost() {
             composable(ToolRoutes.Language) { LanguageScreen(tools, back) }
             composable(ToolRoutes.Memory) { MemoryScreen(tools, back) }
             composable(ToolRoutes.Keys) { ApiKeyScreen(tools, back) }
+            composable(ToolRoutes.Permissions) { PermissionsScreen(back) }
             composable(Tab.Settings.route) { SettingsScreen(tools) }
         }
     }

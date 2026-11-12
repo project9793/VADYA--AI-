@@ -140,6 +140,7 @@ fun HomeScreen(vm: AssistantViewModel, tools: ToolsViewModel, onOpenChat: () -> 
 
         Spacer(Modifier.height(12.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            QuickAction("Search", Icons.Default.Search) { text = "इंटरनेट से खोजकर बताओ: " }
             QuickAction("Code", Icons.Default.Code) { text = "इस काम का code लिखो: " }
             QuickAction("Translate", Icons.Default.Translate) { text = "इसे English में translate करो: " }
             QuickAction("Explain", Icons.Default.Lightbulb) { text = "आसान भाषा में समझाओ: " }

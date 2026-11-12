@@ -140,20 +140,41 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
         job?.cancel()
         job = viewModelScope.launch {
-            gemini.generate(key, store.model, withUser.messages, voice, buildContext(), store.searchEnabled)
+            val modelId = ids.incrementAndGet()
+            val result = gemini.generate(
+                key, store.model, withUser.messages, voice, buildContext(), store.searchEnabled
+            ) { partial ->
+                // answer streams in word by word
+                val ts = System.currentTimeMillis()
+                _ui.update { st ->
+                    val msgs = st.conv.messages
+                    val last = msgs.lastOrNull()
+                    val newMsgs = if (last != null && last.id == modelId)
+                        msgs.dropLast(1) + last.copy(text = partial)
+                    else msgs + ChatMessage(modelId, "model", partial, ts)
+                    st.copy(conv = st.conv.copy(messages = newMsgs))
+                }
+            }
+            result
                 .onSuccess { reply ->
                     val t = System.currentTimeMillis()
                     val c = _ui.value.conv
                     val done = c.copy(
                         updated = t,
-                        messages = c.messages + ChatMessage(ids.incrementAndGet(), "model", reply, t)
+                        messages = c.messages.filterNot { it.id == modelId } +
+                            ChatMessage(modelId, "model", reply, t)
                     )
                     _ui.update { it.copy(conv = done, busy = false, orb = OrbState.Idle) }
                     persist(done)
                     if (voice) speak(reply)
                 }
                 .onFailure { e ->
-                    _ui.update { it.copy(busy = false, orb = OrbState.Idle, error = e.message ?: "Error") }
+                    _ui.update { st ->
+                        st.copy(
+                            conv = st.conv.copy(messages = st.conv.messages.filterNot { it.id == modelId }),
+                            busy = false, orb = OrbState.Idle, error = e.message ?: "Error"
+                        )
+                    }
                 }
         }
     }
@@ -420,17 +441,18 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             speakJob?.cancel()
             setOrb(OrbState.Thinking)
             speakJob = viewModelScope.launch {
-                val ok = try {
-                    speaker.speak(key, clean, store.ttsVoice) { setOrb(OrbState.Speaking) }
+                val chunks = speaker.chunksOf(clean)
+                val played = try {
+                    speaker.speak(key, chunks, store.ttsVoice) { setOrb(OrbState.Speaking) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    false
+                    0
                 }
-                if (ok) onSpeakDone()
+                if (played >= chunks.size) onSpeakDone()
                 else {
-                    showError("Gemini आवाज़ नहीं मिली (limit?), इसलिए फ़ोन की आवाज़ इस्तेमाल हुई।")
-                    speakWithAndroid(clean)
+                    showError("Gemini आवाज़ नहीं मिली (limit?), बाकी हिस्सा फ़ोन की आवाज़ में बोला।")
+                    speakWithAndroid(chunks.drop(played).joinToString(" "))
                 }
             }
         } else {

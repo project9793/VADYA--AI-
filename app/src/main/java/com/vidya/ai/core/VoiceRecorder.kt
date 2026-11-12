@@ -27,7 +27,7 @@ class VoiceRecorder {
     suspend fun record(
         maxMs: Long = 25_000,
         noSpeechMs: Long = 8_000,
-        endSilenceMs: Long = 1_400
+        endSilenceMs: Long = 1_000
     ): Recording = withContext(Dispatchers.IO) {
         finishRequested = false
         val rate = 16_000

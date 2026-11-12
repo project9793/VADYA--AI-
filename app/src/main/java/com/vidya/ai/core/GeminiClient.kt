@@ -4,7 +4,9 @@ import android.util.Base64
 import com.vidya.ai.data.ChatMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -18,17 +20,22 @@ import javax.net.ssl.SSLException
 
 class GeminiClient {
 
+    private val lite = "gemini-2.5-flash-lite"
+    private val lite3 = "gemini-3.1-flash-lite"
+
     private fun systemPrompt(voice: Boolean, extra: String) = buildString {
         append("You are a friendly, accurate personal assistant inside the VIDYA AI app. ")
         append("Reply in the same language the user writes in (Hindi, Hinglish, English or any other). ")
         append("Do not use markdown symbols like ** or #. Use plain text. ")
         if (voice) append("This is a spoken conversation: answer in 1 to 3 short, natural sentences unless asked for detail. If the user speaks Hindi or Hinglish, reply in Hindi written in Devanagari script, never in Roman letters, so the voice pronounces it correctly. ")
         else append("Be clear and well organised; use short paragraphs or numbered lines. Use code blocks only when writing code. ")
-        append("If you are not sure about a fact, say so instead of guessing. ")
+        append("Start with the answer immediately, no preamble. If you are not sure about a fact, say so instead of guessing. ")
         append(extra)
     }
 
-    private fun chatBody(history: List<ChatMessage>, voice: Boolean, extra: String, search: Boolean): String {
+    private fun chatBody(
+        model: String, history: List<ChatMessage>, voice: Boolean, extra: String, search: Boolean
+    ): String {
         // Gemini wants alternating roles starting with "user": merge same-role neighbours.
         val merged = mutableListOf<Pair<String, String>>()
         history.takeLast(24).dropWhile { it.role != "user" }.forEach { m ->
@@ -51,23 +58,29 @@ class GeminiClient {
         if (search) {
             body.put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
         }
+        // 2.5 models "think" before answering; switching it off makes replies much faster.
+        if (model.contains("2.5")) {
+            body.put("generationConfig",
+                JSONObject().put("thinkingConfig", JSONObject().put("thinkingBudget", 0)))
+        }
         return body.toString()
     }
 
     /**
-     * [extra] = date/time, assistant + user name, language and memories.
-     * [search] = let Gemini use Google Search for current information.
+     * [extra] = date/time, names, language, memories. [search] = Google Search for live info.
+     * [onPartial] receives the text-so-far while the answer streams in.
      */
     suspend fun generate(
         apiKey: String, model: String, history: List<ChatMessage>, voice: Boolean,
-        extra: String = "", search: Boolean = false
+        extra: String = "", search: Boolean = false, onPartial: ((String) -> Unit)? = null
     ): Result<String> {
-        val plain = chatBody(history, voice, extra, false)
-        return if (search) run(apiKey, model, chatBody(history, voice, extra, true), plain)
-        else run(apiKey, model, plain, null)
+        val m = SecureStore.sanitizeModel(model)
+        return execute(apiKey, listOf(m, lite, lite3).distinct(), search, onPartial) { mm, tools ->
+            chatBody(mm, history, voice, extra, tools)
+        }
     }
 
-    /** Speech-to-text using Gemini audio understanding (works without Google's speech service). */
+    /** Speech-to-text with Gemini audio understanding (fast lite model first). */
     suspend fun transcribe(apiKey: String, model: String, wav: ByteArray, lang: String): Result<String> {
         val prompt = "Transcribe this audio exactly as spoken. Keep the original language " +
             "(write Hindi and Hinglish speech in Devanagari script, other Indian languages in their own script). " +
@@ -81,12 +94,14 @@ class GeminiClient {
                     JSONObject().put("mime_type", "audio/wav").put("data", b64)))
                 .put(JSONObject().put("text", prompt)))
         )).toString()
-        return run(apiKey, model, body, null)
+        val m = SecureStore.sanitizeModel(model)
+        return execute(apiKey, listOf(lite, m, lite3).distinct(), false, null) { _, _ -> body }
     }
 
-    private fun post(apiKey: String, model: String, body: String): Pair<Int, String> {
-        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+    private fun openConn(apiKey: String, model: String, stream: Boolean): HttpURLConnection {
+        val method = if (stream) "streamGenerateContent?alt=sse" else "generateContent"
+        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:$method")
+        return (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20_000
             readTimeout = 60_000
@@ -94,6 +109,10 @@ class GeminiClient {
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("x-goog-api-key", apiKey)
         }
+    }
+
+    private fun post(apiKey: String, model: String, body: String): Pair<Int, String> {
+        val conn = openConn(apiKey, model, false)
         conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
         val code = conn.responseCode
         val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)
@@ -102,37 +121,89 @@ class GeminiClient {
         return code to raw
     }
 
+    /** Streaming call. Returns a synthetic normal response so parse() can be reused. */
+    private suspend fun postStream(
+        apiKey: String, model: String, body: String, onPartial: (String) -> Unit
+    ): Pair<Int, String> {
+        val conn = openConn(apiKey, model, true)
+        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        val code = conn.responseCode
+        if (code !in 200..299) {
+            val raw = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            conn.disconnect()
+            return code to raw
+        }
+        val sb = StringBuilder()
+        val titles = LinkedHashSet<String>()
+        var finish = ""
+        conn.inputStream.bufferedReader().use { reader ->
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val line = reader.readLine() ?: break
+                if (!line.startsWith("data:")) continue
+                val json = line.removePrefix("data:").trim()
+                if (json.isEmpty()) continue
+                val o = try { JSONObject(json) } catch (e: Exception) { continue }
+                val cand = o.optJSONArray("candidates")?.optJSONObject(0) ?: continue
+                var added = false
+                val parts = cand.optJSONObject("content")?.optJSONArray("parts")
+                if (parts != null) for (i in 0 until parts.length()) {
+                    val t = parts.getJSONObject(i).optString("text")
+                    if (t.isNotEmpty()) { sb.append(t); added = true }
+                }
+                val gc = cand.optJSONObject("groundingMetadata")?.optJSONArray("groundingChunks")
+                if (gc != null) for (i in 0 until gc.length()) {
+                    val title = gc.getJSONObject(i).optJSONObject("web")?.optString("title").orEmpty()
+                    if (title.isNotBlank()) titles.add(title)
+                }
+                val fr = cand.optString("finishReason")
+                if (fr.isNotBlank()) finish = fr
+                if (added) onPartial(sb.toString().trim())
+            }
+        }
+        conn.disconnect()
+
+        val chunks = JSONArray()
+        titles.forEach { chunks.put(JSONObject().put("web", JSONObject().put("title", it))) }
+        val cand = JSONObject()
+            .put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sb.toString()))))
+            .put("finishReason", finish)
+            .put("groundingMetadata", JSONObject().put("groundingChunks", chunks))
+        return 200 to JSONObject().put("candidates", JSONArray().put(cand)).toString()
+    }
+
     /**
-     * Tries the chosen model first. Server busy (5xx) -> retry once; model busy / over quota /
-     * misspelt -> lighter models; search tool problem -> same request without search.
+     * Tries models in order. Server busy (5xx) -> one quick retry; model busy / over quota / misspelt
+     * -> next model; Google Search problem -> same request without search.
      */
-    private suspend fun run(
-        apiKey: String, model: String, body: String, fallbackBody: String?
+    private suspend fun execute(
+        apiKey: String, models: List<String>, tools: Boolean,
+        onPartial: ((String) -> Unit)?, build: (String, Boolean) -> String
     ): Result<String> = withContext(Dispatchers.IO) {
-        val models = listOf(
-            SecureStore.sanitizeModel(model), "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"
-        ).distinct()
-        var cur = body
+        var useTools = tools
         var firstError: Exception? = null
         try {
             for (m in models) {
                 var attempt = 0
                 while (attempt < 2) {
-                    val (code, raw) = post(apiKey, m, cur)
+                    val body = build(m, useTools)
+                    val (code, raw) =
+                        if (onPartial != null) postStream(apiKey, m, body, onPartial)
+                        else post(apiKey, m, body)
                     if (code in 200..299) return@withContext Result.success(parse(raw))
                     if (firstError == null) firstError = Exception(friendly(code, raw))
                     val badModel = code == 400 && raw.contains("GenerateContentRequest.model")
-                    val toolProblem = fallbackBody != null && cur !== fallbackBody && !badModel &&
+                    if (useTools && !badModel &&
                         ((code == 400 && !raw.contains("API key", true)) || code == 429)
-                    if (toolProblem) {
-                        cur = fallbackBody ?: cur        // retry without Google Search
+                    ) {
+                        useTools = false              // retry without Google Search
                         continue
                     }
                     if (code in 500..504) {
                         attempt++
-                        if (attempt < 2) delay(1500)
+                        if (attempt < 2) delay(600)
                     } else if (code == 404 || code == 429 || badModel) {
-                        break                           // try the next model
+                        break                         // next model
                     } else {
                         return@withContext Result.failure(Exception(friendly(code, raw)))
                     }
@@ -194,7 +265,6 @@ class GeminiClient {
         if (parts != null) for (i in 0 until parts.length()) sb.append(parts.getJSONObject(i).optString("text"))
         if (sb.isBlank()) throw Exception("खाली जवाब मिला (${cand.optString("finishReason")})।")
 
-        // Sources used by Google Search (shown in chat, not spoken)
         val titles = LinkedHashSet<String>()
         val chunks = cand.optJSONObject("groundingMetadata")?.optJSONArray("groundingChunks")
         if (chunks != null) for (i in 0 until chunks.length()) {

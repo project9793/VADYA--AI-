@@ -78,12 +78,11 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
         if (key.isBlank()) { voiceTestMsg = "पहले Tools → API Key में Gemini key डालें।"; return }
         voiceTestMsg = "आवाज़ बन रही है…"
         viewModelScope.launch {
-            val ok = speaker.speak(
-                key,
-                "नमस्ते! मैं ${store.assistantName} हूँ। कहिए, मैं आपकी क्या मदद करूँ?",
-                store.ttsVoice
-            ) { voiceTestMsg = "बोल रही हूँ…" }
-            voiceTestMsg = if (ok) "" else "Gemini आवाज़ नहीं मिली (limit या model की दिक्कत)। थोड़ी देर बाद कोशिश करें।"
+            val text = "नमस्ते! मैं ${store.assistantName} हूँ। कहिए, मैं आपकी क्या मदद करूँ?"
+            val played = speaker.speak(key, speaker.chunksOf(text), store.ttsVoice) {
+                voiceTestMsg = "बोल रही हूँ…"
+            }
+            voiceTestMsg = if (played > 0) "" else "Gemini आवाज़ नहीं मिली (limit या model की दिक्कत)। थोड़ी देर बाद कोशिश करें।"
         }
     }
 }

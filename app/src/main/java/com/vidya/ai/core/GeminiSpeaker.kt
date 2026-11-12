@@ -27,17 +27,23 @@ class GeminiSpeaker {
     // Newest first. 3.8 models use a newer request schema than 3.1 / 2.5 models.
     private val models = listOf("gemini-3.8-flash-lite-tts", "gemini-3.1-flash-tts-preview")
 
-    /** Speaks [text]. Returns true if audio was played. Throws CancellationException when cancelled. */
-    suspend fun speak(apiKey: String, text: String, voice: String, onStart: () -> Unit): Boolean =
+    /** First chunk is short so speech starts quickly; the rest are longer. */
+    fun chunksOf(text: String): List<String> = splitText(text)
+
+    /**
+     * Speaks the chunks in order (fetched in parallel). Returns how many chunks were played,
+     * so the caller can speak the rest with another voice if one failed.
+     */
+    suspend fun speak(apiKey: String, chunks: List<String>, voice: String, onStart: () -> Unit): Int =
         coroutineScope {
-            val chunks = splitText(text).take(4)
-            val fetches = chunks.map { c -> async(Dispatchers.IO) { fetch(apiKey, c, voice) } }
-            var played = false
+            val fetches = chunks.take(4).map { c -> async(Dispatchers.IO) { fetch(apiKey, c, voice) } }
+            var played = 0
             try {
                 for (f in fetches) {
                     val audio = f.await() ?: break
-                    if (!played) { played = true; onStart() }
+                    if (played == 0) onStart()
                     play(audio)
+                    played++
                 }
             } finally {
                 fetches.forEach { it.cancel() }
@@ -174,16 +180,17 @@ class GeminiSpeaker {
         }
     }
 
-    private fun splitText(t: String, max: Int = 700): List<String> {
+    private fun splitText(t: String, max: Int = 600): List<String> {
         val out = mutableListOf<String>()
         val sb = StringBuilder()
         for (s in t.split(Regex("(?<=[.!?।\\n])\\s*"))) {
             if (s.isBlank()) continue
-            if (sb.isNotEmpty() && sb.length + s.length > max) {
+            sb.append(s).append(' ')
+            val limit = if (out.isEmpty()) 80 else max      // short first chunk = quick start
+            if (sb.length >= limit) {
                 out += sb.toString().trim()
                 sb.clear()
             }
-            sb.append(s).append(' ')
         }
         if (sb.isNotBlank()) out += sb.toString().trim()
         return out

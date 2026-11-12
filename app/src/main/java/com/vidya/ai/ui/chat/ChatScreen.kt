@@ -38,6 +38,10 @@ fun ChatScreen(vm: AssistantViewModel) {
         if (n > 0) listState.animateScrollToItem(n - 1)
     }
 
+    LaunchedEffect(msgs.lastOrNull()?.text?.length) {
+        if (ui.busy && msgs.isNotEmpty()) listState.scrollToItem(msgs.size - 1)
+    }
+
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -70,7 +74,7 @@ fun ChatScreen(vm: AssistantViewModel) {
                         onRegenerate = vm::regenerate
                     )
                 }
-                if (ui.busy) item { Text("सोच रही हूँ…", style = MaterialTheme.typography.bodyMedium) }
+                if (ui.busy && msgs.lastOrNull()?.role != "model") item { Text("सोच रही हूँ…", style = MaterialTheme.typography.bodyMedium) }
             }
         }
 
