@@ -11,7 +11,7 @@ android {
         applicationId = "com.vidya.ai"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
+        versionCode = 112
         versionName = "12"
     }
     signingConfigs {
