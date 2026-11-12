@@ -43,9 +43,16 @@ fun HomeScreen(vm: AssistantViewModel, onOpenChat: () -> Unit) {
     val msgs = ui.conv.messages
     val lastUser = msgs.lastOrNull { it.role == "user" }
     val lastModel = msgs.lastOrNull()?.takeIf { it.role == "model" }
+    val scroll = rememberScrollState()
+    LaunchedEffect(lastModel?.id) {
+        if (lastModel != null) {
+            kotlinx.coroutines.delay(150)
+            scroll.animateScrollTo(scroll.maxValue)
+        }
+    }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        Modifier.fillMaxSize().verticalScroll(scroll).padding(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("VIDYA AI", style = MaterialTheme.typography.headlineLarge, color = VidyaCyan)

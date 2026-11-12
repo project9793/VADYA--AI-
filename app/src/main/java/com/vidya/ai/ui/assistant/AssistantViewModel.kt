@@ -1,11 +1,13 @@
 package com.vidya.ai.ui.assistant
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
@@ -199,18 +201,35 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(orb = OrbState.Idle, busy = false, partial = "") }
     }
 
-    private fun startListening() {
+    private var sttAttempt = 0
+    private var resultDelivered = false
+
+    /** Speech services to try in order: (service, null = system default; pass language?) */
+    private fun sttPlans(): List<Pair<ComponentName?, Boolean>> = buildList {
+        val g = app.packageManager
+            .queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+            .firstOrNull { it.serviceInfo.packageName == "com.google.android.googlequicksearchbox" }
+        if (g != null) add(ComponentName(g.serviceInfo.packageName, g.serviceInfo.name) to true)
+        add(null to true)
+        add(null to false)
+    }
+
+    private fun startListening(attempt: Int = 0) {
         if (!SpeechRecognizer.isRecognitionAvailable(app)) {
             showError("इस फ़ोन में speech recognition उपलब्ध नहीं है। Google app install/update करें।")
             return
         }
+        sttAttempt = attempt
+        resultDelivered = false
+        val (service, withLang) = sttPlans()[attempt]
         recognizer?.destroy()
-        val r = SpeechRecognizer.createSpeechRecognizer(app)
+        val r = if (service != null) SpeechRecognizer.createSpeechRecognizer(app, service)
+                else SpeechRecognizer.createSpeechRecognizer(app)
         r.setRecognitionListener(listener)
         recognizer = r
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, store.sttLang)
+            if (withLang) putExtra(RecognizerIntent.EXTRA_LANGUAGE, store.sttLang)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         _ui.update { it.copy(orb = OrbState.Listening, partial = "", error = null) }
@@ -231,12 +250,15 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         }
 
         override fun onResults(results: Bundle?) {
+            resultDelivered = true
             val t = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
             _ui.update { it.copy(partial = "") }
             if (t.isNullOrBlank()) setOrb(OrbState.Idle) else send(t, voice = true)
         }
 
         override fun onError(error: Int) {
+            // Some services send a late error (e.g. 11) after a successful result: ignore it.
+            if (resultDelivered || _ui.value.orb != OrbState.Listening) return
             _ui.update { it.copy(partial = "", orb = OrbState.Idle) }
             when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH,
@@ -245,6 +267,17 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> Unit
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
                     showError("Mic permission चाहिए। Settings tab में दें।")
+                11, 12, 13 -> {   // server disconnected / language not supported / unavailable
+                    if (sttAttempt + 1 < sttPlans().size) {
+                        val next = sttAttempt + 1
+                        _ui.update { it.copy(orb = OrbState.Listening) }
+                        main.postDelayed({ startListening(next) }, 400)
+                    } else {
+                        showError("इस फ़ोन की speech service (code $error) काम नहीं कर रही। Google app update करें और Google app → Settings → Voice → Languages में Hindi download करें। तब तक text लिखकर पूछिए।")
+                    }
+                }
+                SpeechRecognizer.ERROR_AUDIO ->
+                    showError("Mic कोई और app इस्तेमाल कर रही है। उसे बंद करके दोबारा कोशिश करें।")
                 SpeechRecognizer.ERROR_NETWORK,
                 SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
                 SpeechRecognizer.ERROR_SERVER ->
