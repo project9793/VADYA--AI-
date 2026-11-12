@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vidya.ai.data.ChatMessage
 import com.vidya.ai.ui.assistant.AssistantViewModel
 import com.vidya.ai.ui.common.rememberMicAction
+import com.vidya.ai.ui.components.ActionCard
 import com.vidya.ai.ui.components.OrbState
 import com.vidya.ai.ui.theme.VidyaViolet
 
@@ -84,6 +85,11 @@ fun ChatScreen(vm: AssistantViewModel) {
                 Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.bodyMedium
             )
+        }
+        ui.pending?.let { p ->
+            Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                ActionCard(p, vm::confirmPending, vm::cancelPending)
+            }
         }
         ui.error?.let {
             Text(it, Modifier.padding(horizontal = 16.dp, vertical = 4.dp),

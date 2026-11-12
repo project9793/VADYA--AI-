@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vidya.ai.ui.assistant.AssistantViewModel
 import com.vidya.ai.ui.tools.ToolsViewModel
 import com.vidya.ai.ui.common.rememberMicAction
+import com.vidya.ai.ui.components.ActionCard
 import com.vidya.ai.ui.components.AiOrb
 import com.vidya.ai.ui.components.OrbState
 import com.vidya.ai.ui.theme.VidyaCyan
@@ -110,6 +111,11 @@ fun HomeScreen(vm: AssistantViewModel, tools: ToolsViewModel, onOpenChat: () -> 
         ui.error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
+        }
+
+        ui.pending?.let { p ->
+            Spacer(Modifier.height(12.dp))
+            ActionCard(p, vm::confirmPending, vm::cancelPending)
         }
 
         if (lastUser != null) {

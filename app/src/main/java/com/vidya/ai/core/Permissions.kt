@@ -10,7 +10,7 @@ import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
-enum class AppPerm { Mic, Camera, Media, Location, Notifications, Screen }
+enum class AppPerm { Mic, Camera, Media, Location, Contacts, Calls, Notifications, Screen }
 
 object Permissions {
 
@@ -37,6 +37,8 @@ object Permissions {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
+        AppPerm.Contacts -> arrayOf(Manifest.permission.READ_CONTACTS)
+        AppPerm.Calls -> arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.ANSWER_PHONE_CALLS)
         AppPerm.Notifications ->
             if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS)
             else emptyArray()
@@ -46,6 +48,7 @@ object Permissions {
     fun isGranted(ctx: Context, p: AppPerm): Boolean = when (p) {
         AppPerm.Notifications -> NotificationManagerCompat.from(ctx).areNotificationsEnabled()
         AppPerm.Screen -> Settings.canDrawOverlays(ctx)
+        AppPerm.Calls -> runtimePerms(p).all { has(ctx, it) }
         else -> runtimePerms(p).any { has(ctx, it) }
     }
 

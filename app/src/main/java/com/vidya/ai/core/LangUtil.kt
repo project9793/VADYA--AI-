@@ -31,6 +31,8 @@ object LangUtil {
 
     fun stripMarkdown(s: String): String = s
         .substringBefore("\n\nस्रोत:")
+        .substringBefore("\n\n⚠")
+        .replace(Regex("[\\p{So}\\p{Sk}\\u200d\\uFE0F]"), "")
         .replace(Regex("```[\\s\\S]*?```"), " ")
         .replace(Regex("(?m)^\\s*[-•]\\s+"), "")
         .replace(Regex("[*#`]"), "")

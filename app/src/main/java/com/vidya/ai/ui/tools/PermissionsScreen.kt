@@ -30,10 +30,14 @@ private val PERMS = listOf(
         "गैलरी की फ़ोटो/वीडियो चुनने के लिए।"),
     PermInfo(AppPerm.Location, "Location 📍", Icons.Default.LocationOn,
         "आस-पास की जानकारी (मौसम, जगह) के लिए।"),
+    PermInfo(AppPerm.Contacts, "Contacts 👤", Icons.Default.Contacts,
+        "नाम बोलकर call / WhatsApp करने के लिए।"),
+    PermInfo(AppPerm.Calls, "Phone calls 📞", Icons.Default.Call,
+        "call लगाने और call काटने के लिए।"),
     PermInfo(AppPerm.Notifications, "Notification 🔔", Icons.Default.Notifications,
         "reminder और सूचनाएँ दिखाने के लिए।"),
     PermInfo(AppPerm.Screen, "Screen 🖥️", Icons.Default.ScreenShare,
-        "दूसरे apps के ऊपर दिखने (floating assistant) की अनुमति।")
+        "दूसरे apps के ऊपर दिखने की अनुमति। (दूसरे app की स्क्रीन पढ़ने या उसमें खुद टाइप करने के लिए Accessibility अलग से चाहिए, वह अभी नहीं जोड़ा।)")
 )
 
 @Composable
@@ -67,7 +71,7 @@ fun PermissionsScreen(onBack: () -> Unit) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("$grantedCount / ${PERMS.size} चालू", style = MaterialTheme.typography.titleMedium)
                 Button(onClick = {
-                    val all = listOf(AppPerm.Mic, AppPerm.Camera, AppPerm.Media, AppPerm.Location, AppPerm.Notifications)
+                    val all = listOf(AppPerm.Mic, AppPerm.Camera, AppPerm.Media, AppPerm.Location, AppPerm.Contacts, AppPerm.Calls, AppPerm.Notifications)
                         .flatMap { Permissions.runtimePerms(it).toList() }.distinct()
                     launcher.launch(all.toTypedArray())
                 }) { Text("सब Allow करें") }

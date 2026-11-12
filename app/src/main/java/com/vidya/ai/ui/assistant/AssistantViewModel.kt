@@ -14,14 +14,18 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.vidya.ai.core.DeviceActions
+import com.vidya.ai.core.DeviceControl
 import com.vidya.ai.core.GeminiClient
 import com.vidya.ai.core.GeminiSpeaker
 import com.vidya.ai.core.LangUtil
 import com.vidya.ai.core.Languages
+import com.vidya.ai.core.LocalAnswers
 import com.vidya.ai.core.MicPermission
 import com.vidya.ai.core.NetworkMonitor
 import com.vidya.ai.core.SecureStore
 import com.vidya.ai.core.VoiceRecorder
+import com.vidya.ai.core.WebSearch
 import com.vidya.ai.data.ChatMessage
 import com.vidya.ai.data.ChatRepository
 import com.vidya.ai.data.Conversation
@@ -46,6 +50,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+import org.json.JSONObject
 
 data class AssistantUiState(
     val conv: Conversation,
@@ -53,8 +58,12 @@ data class AssistantUiState(
     val partial: String = "",
     val busy: Boolean = false,
     val error: String? = null,
-    val handsFree: Boolean = false
+    val handsFree: Boolean = false,
+    val pending: PendingAction? = null
 )
+
+/** A call / WhatsApp message waiting for the user's confirmation. */
+data class PendingAction(val kind: String, val name: String, val number: String, val message: String)
 
 class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
@@ -63,6 +72,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private val memory = MemoryRepository(store)
     private val gemini = GeminiClient()
     private val speaker = GeminiSpeaker()
+    private val actions = DeviceActions(app)
     private val recorder = VoiceRecorder()
     private val main = Handler(Looper.getMainLooper())
     private val ids = AtomicLong(System.currentTimeMillis())
@@ -135,14 +145,29 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             updated = now,
             messages = conv.messages + ChatMessage(ids.incrementAndGet(), "user", msg, now)
         )
-        _ui.update { it.copy(conv = withUser, orb = OrbState.Thinking, busy = true, error = null) }
+        _ui.update { it.copy(conv = withUser, orb = OrbState.Thinking, busy = true, error = null, pending = null) }
         persist(withUser)
 
         job?.cancel()
         job = viewModelScope.launch {
+            // 1) instant answers from the phone itself (date / time): always correct, no delay
+            LocalAnswers.tryAnswer(msg)?.let { reply ->
+                finishWith(reply, voice, null)
+                return@launch
+            }
+            // 2) phone-control commands (call, WhatsApp, YouTube, music, open app ...)
+            if (DeviceControl.looksLikeCommand(msg)) {
+                val cmd = gemini.parseCommand(key, store.model, msg).getOrNull()
+                if (cmd != null && handleCommand(cmd, voice)) return@launch
+            }
+            // 3) normal answer; time-sensitive questions get real, fresh web results first
+            var hits: List<WebSearch.Hit> = emptyList()
+            if (store.searchEnabled && WebSearch.needsFresh(msg)) hits = WebSearch.news(msg)
+
             val modelId = ids.incrementAndGet()
             val result = gemini.generate(
-                key, store.model, withUser.messages, voice, buildContext(), store.searchEnabled
+                key, store.model, withUser.messages, voice,
+                buildContext() + WebSearch.asContext(hits), store.searchEnabled, nowLine()
             ) { partial ->
                 // answer streams in word by word
                 val ts = System.currentTimeMillis()
@@ -156,7 +181,15 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
             }
             result
-                .onSuccess { reply ->
+                .onSuccess { reply0 ->
+                    var reply = reply0
+                    if (hits.isNotEmpty() && !reply.contains("\n\nस्रोत:")) {
+                        reply += WebSearch.sourcesFooter(hits)
+                    } else if (store.searchEnabled && hits.isEmpty() && gemini.lastSearchDropped &&
+                        WebSearch.needsFresh(msg)
+                    ) {
+                        reply += "\n\n⚠ इंटरनेट खोज नहीं चल पाई, यह जवाब पुरानी जानकारी पर आधारित हो सकता है।"
+                    }
                     val t = System.currentTimeMillis()
                     val c = _ui.value.conv
                     val done = c.copy(
@@ -177,6 +210,85 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                     }
                 }
         }
+    }
+
+    private fun nowLine(): String =
+        SimpleDateFormat("EEEE, d MMMM yyyy, hh:mm a", Locale.ENGLISH).format(Date()) +
+            " (" + TimeZone.getDefault().id + ")"
+
+    /** Adds an assistant message (optionally with a pending confirmation) and speaks it for voice turns. */
+    private fun finishWith(reply: String, voice: Boolean, pending: PendingAction?) {
+        val t = System.currentTimeMillis()
+        val c = _ui.value.conv
+        val done = c.copy(
+            updated = t,
+            messages = c.messages + ChatMessage(ids.incrementAndGet(), "model", reply, t)
+        )
+        _ui.update { it.copy(conv = done, busy = false, orb = OrbState.Idle, pending = pending) }
+        persist(done)
+        if (voice) speak(reply)
+    }
+
+    private suspend fun handleCommand(cmd: JSONObject, voice: Boolean): Boolean {
+        val action = cmd.optString("action")
+        val name = cmd.optString("name")
+        val nameEn = cmd.optString("name_en")
+        val number = cmd.optString("number").filter { it.isDigit() || it == '+' }
+        when (action) {
+            "call", "whatsapp" -> {
+                val isCall = action == "call"
+                var display = name.ifBlank { nameEn }
+                var num = if (number.filter { it.isDigit() }.length >= 7) number else ""
+                if (num.isEmpty() && display.isNotBlank()) {
+                    val list = withContext(Dispatchers.IO) { actions.findContact(listOf(name, nameEn)) }
+                    val hit = list.firstOrNull { it.name.equals(name, true) || it.name.equals(nameEn, true) }
+                        ?: list.firstOrNull()
+                    if (hit != null) { display = hit.name; num = hit.number }
+                }
+                if (isCall && num.isEmpty()) {
+                    finishWith(
+                        "\"$display\" का नंबर नहीं मिला। Tools → Permissions में Contacts allow करें, या नंबर बोलिए।",
+                        voice, null
+                    )
+                    return true
+                }
+                val p = PendingAction(if (isCall) "call" else "whatsapp", display, num, cmd.optString("message"))
+                val ask = if (isCall) "$display को call लगाऊँ? नीचे देखकर पुष्टि करें।"
+                else "$display के लिए WhatsApp संदेश तैयार है। नीचे देखकर पुष्टि करें।"
+                finishWith(ask, voice, p)
+                return true
+            }
+            "end_call" -> { finishWith(actions.endCall(), voice, null); return true }
+            "open_app" -> { finishWith(actions.openApp(cmd.optString("app")), voice, null); return true }
+            "youtube_search" -> {
+                val q = cmd.optString("query").ifBlank { name }
+                if (q.isNotBlank()) { finishWith(actions.youtubeSearch(q), voice, null); return true }
+            }
+            "play_music" -> {
+                val q = cmd.optString("query").ifBlank { name }
+                if (q.isNotBlank()) { finishWith(actions.playMusic(q), voice, null); return true }
+            }
+        }
+        return false
+    }
+
+    fun confirmPending(editedMessage: String) {
+        val p = _ui.value.pending ?: return
+        _ui.update { it.copy(pending = null) }
+        val result = when (p.kind) {
+            "call" -> actions.call(p.number)
+            "whatsapp" -> {
+                val r = actions.whatsapp(p.number.ifBlank { null }, editedMessage)
+                "$r\nकिसे: ${p.name.ifBlank { "(आप चुनेंगे)" }}\nसंदेश: $editedMessage"
+            }
+            else -> ""
+        }
+        if (result.isNotBlank()) finishWith(result, false, null)
+    }
+
+    fun cancelPending() {
+        _ui.update { it.copy(pending = null) }
+        finishWith("ठीक है, रद्द कर दिया।", false, null)
     }
 
     /** Date/time, names, language and memories that are sent with every request. */

@@ -23,6 +23,9 @@ class GeminiClient {
     private val lite = "gemini-2.5-flash-lite"
     private val lite3 = "gemini-3.1-flash-lite"
 
+    /** True when Google Search had to be dropped for the last request. */
+    @Volatile var lastSearchDropped = false
+
     private fun systemPrompt(voice: Boolean, extra: String) = buildString {
         append("You are a friendly, accurate personal assistant inside the VIDYA AI app. ")
         append("Reply in the same language the user writes in (Hindi, Hinglish, English or any other). ")
@@ -30,11 +33,16 @@ class GeminiClient {
         if (voice) append("This is a spoken conversation: answer in 1 to 3 short, natural sentences unless asked for detail. If the user speaks Hindi or Hinglish, reply in Hindi written in Devanagari script, never in Roman letters, so the voice pronounces it correctly. ")
         else append("Be clear and well organised; use short paragraphs or numbered lines. Use code blocks only when writing code. ")
         append("Start with the answer immediately, no preamble. If you are not sure about a fact, say so instead of guessing. ")
+        append("Your built-in knowledge is OUTDATED (it ends in early 2025). Anything that can change over time ")
+        append("(news, elections and who holds office, sports, prices, weather, product releases, 'latest', 'today', 'now') ")
+        append("must be answered ONLY from the web results given below or from Google Search, never from memory; ")
+        append("if you cannot verify it, say so. Never state a date or time from memory: use the device date given below. ")
         append(extra)
     }
 
     private fun chatBody(
-        model: String, history: List<ChatMessage>, voice: Boolean, extra: String, search: Boolean
+        model: String, history: List<ChatMessage>, voice: Boolean, extra: String, search: Boolean,
+        nowLine: String
     ): String {
         // Gemini wants alternating roles starting with "user": merge same-role neighbours.
         val merged = mutableListOf<Pair<String, String>>()
@@ -43,6 +51,9 @@ class GeminiClient {
             if (last != null && last.first == m.role) {
                 merged[merged.lastIndex] = last.first to (last.second + "\n" + m.text)
             } else merged.add(m.role to m.text)
+        }
+        if (nowLine.isNotBlank() && merged.isNotEmpty() && merged.last().first == "user") {
+            merged[merged.lastIndex] = "user" to (merged.last().second + "\n\n[Device date/time right now: $nowLine]")
         }
         val contents = JSONArray()
         merged.forEach { (role, text) ->
@@ -72,11 +83,40 @@ class GeminiClient {
      */
     suspend fun generate(
         apiKey: String, model: String, history: List<ChatMessage>, voice: Boolean,
-        extra: String = "", search: Boolean = false, onPartial: ((String) -> Unit)? = null
+        extra: String = "", search: Boolean = false, nowLine: String = "",
+        onPartial: ((String) -> Unit)? = null
     ): Result<String> {
         val m = SecureStore.sanitizeModel(model)
         return execute(apiKey, listOf(m, lite, lite3).distinct(), search, onPartial) { mm, tools ->
-            chatBody(mm, history, voice, extra, tools)
+            chatBody(mm, history, voice, extra, tools, nowLine)
+        }
+    }
+
+    /** Turns a spoken phone-control request into JSON (call, whatsapp, open_app, ...). */
+    suspend fun parseCommand(apiKey: String, model: String, text: String): Result<JSONObject> {
+        val prompt = "You convert a spoken phone-control request (Hindi, Hinglish, English or any Indian language) into JSON. " +
+            "Return ONLY JSON with the keys: action, name, name_en, number, message, app, query. " +
+            "action must be one of: call, end_call, whatsapp, open_app, youtube_search, play_music, none. " +
+            "call = place a phone call (name = contact name as spoken, name_en = the same name in Roman letters, " +
+            "number = digits if the user said a number). end_call = hang up / cut the current call. " +
+            "whatsapp = send a WhatsApp message (name, name_en, number as above; message = the text to send, or empty). " +
+            "open_app = open an app (app is one of: whatsapp, youtube, youtube_music, chrome, maps, instagram, " +
+            "facebook, telegram, spotify, gmail, camera, settings, photos, dialer, other). " +
+            "youtube_search = search or show videos on YouTube (query = search text). " +
+            "play_music = play a song, music or video by name or artist (query = what to play). " +
+            "none = anything else such as questions, chat or information requests. Unused fields are empty strings. " +
+            "User request: " + JSONObject.quote(text)
+        val m = SecureStore.sanitizeModel(model)
+        val r = execute(apiKey, listOf(lite, m, lite3).distinct(), false, null) { mm, _ ->
+            val gen = JSONObject().put("responseMimeType", "application/json")
+            if (mm.contains("2.5")) gen.put("thinkingConfig", JSONObject().put("thinkingBudget", 0))
+            JSONObject().put("contents", JSONArray().put(
+                JSONObject().put("role", "user")
+                    .put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+            )).put("generationConfig", gen).toString()
+        }
+        return r.mapCatching { raw ->
+            JSONObject(raw.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim())
         }
     }
 
@@ -181,6 +221,7 @@ class GeminiClient {
         onPartial: ((String) -> Unit)?, build: (String, Boolean) -> String
     ): Result<String> = withContext(Dispatchers.IO) {
         var useTools = tools
+        lastSearchDropped = false
         var firstError: Exception? = null
         try {
             for (m in models) {
@@ -197,6 +238,7 @@ class GeminiClient {
                         ((code == 400 && !raw.contains("API key", true)) || code == 429)
                     ) {
                         useTools = false              // retry without Google Search
+                        lastSearchDropped = true
                         continue
                     }
                     if (code in 500..504) {
