@@ -36,6 +36,15 @@ class SecureStore(context: Context) {
         get() = prefs.getString("voice_engine", "gemini") ?: "gemini"
         set(v) = prefs.edit().putString("voice_engine", v).apply()
 
+    /** "gemini" = natural Gemini voice, "android" = phone's own text-to-speech */
+    var ttsEngine: String
+        get() = prefs.getString("tts_engine", "gemini") ?: "gemini"
+        set(v) = prefs.edit().putString("tts_engine", v).apply()
+
+    var ttsVoice: String
+        get() = prefs.getString("tts_voice", "Kore") ?: "Kore"
+        set(v) = prefs.edit().putString("tts_voice", v).apply()
+
     var useDialog: Boolean
         get() = voiceEngine == "window"
         set(v) { voiceEngine = if (v) "window" else "google" }

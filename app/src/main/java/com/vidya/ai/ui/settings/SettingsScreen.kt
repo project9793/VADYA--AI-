@@ -32,6 +32,8 @@ private val LANGS = listOf(
     "Deutsch" to "de-DE", "العربية" to "ar-SA", "日本語" to "ja-JP", "中文" to "zh-CN"
 )
 
+private val TTS_VOICES = listOf("Kore", "Aoede", "Leda", "Zephyr", "Puck", "Charon", "Fenrir")
+
 private val ENGINES = listOf(
     "Gemini (सुझाया)" to "gemini",
     "Google in-app" to "google",
@@ -49,6 +51,8 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
     ) { micGranted = it }
     var lang by remember { mutableStateOf(vm.sttLang) }
     var engine by remember { mutableStateOf(vm.voiceEngine) }
+    var ttsEngine by remember { mutableStateOf(vm.ttsEngine) }
+    var ttsVoice by remember { mutableStateOf(vm.ttsVoice) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -98,6 +102,42 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                             label = { Text(label) }
                         )
                     }
+                }
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("AI की आवाज़ (Voice output)", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Gemini voice इंसानों जैसी स्वाभाविक आवाज़ देती है। Free limit पूरी होने पर app अपने आप फ़ोन की आवाज़ पर लौट जाता है।",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = ttsEngine == "gemini",
+                        onClick = { ttsEngine = "gemini"; vm.ttsEngine = "gemini" },
+                        label = { Text("Gemini voice (सुझाया)") }
+                    )
+                    FilterChip(
+                        selected = ttsEngine == "android",
+                        onClick = { ttsEngine = "android"; vm.ttsEngine = "android" },
+                        label = { Text("फ़ोन की आवाज़") }
+                    )
+                }
+                if (ttsEngine == "gemini") {
+                    Text("आवाज़ चुनिए:", style = MaterialTheme.typography.bodySmall)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TTS_VOICES.forEach { v ->
+                            FilterChip(
+                                selected = ttsVoice == v,
+                                onClick = { ttsVoice = v; vm.ttsVoice = v },
+                                label = { Text(v) }
+                            )
+                        }
+                    }
+                    Button(onClick = vm::testVoice) { Text("आवाज़ सुनकर देखें") }
+                    if (vm.voiceTestMsg.isNotBlank()) Text(vm.voiceTestMsg, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

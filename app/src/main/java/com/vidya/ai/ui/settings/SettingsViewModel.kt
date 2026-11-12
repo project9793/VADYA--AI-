@@ -7,12 +7,36 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vidya.ai.core.GeminiClient
+import com.vidya.ai.core.GeminiSpeaker
 import com.vidya.ai.core.SecureStore
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val store = SecureStore(app)
     private val gemini = GeminiClient()
+    private val speaker = GeminiSpeaker()
+
+    var ttsEngine: String
+        get() = store.ttsEngine
+        set(v) { store.ttsEngine = v }
+    var ttsVoice: String
+        get() = store.ttsVoice
+        set(v) { store.ttsVoice = v }
+
+    var voiceTestMsg by mutableStateOf("")
+        private set
+
+    fun testVoice() {
+        val key = store.geminiKey
+        if (key.isBlank()) { voiceTestMsg = "पहले Gemini API key डालकर Save करें।"; return }
+        voiceTestMsg = "आवाज़ बन रही है…"
+        viewModelScope.launch {
+            val ok = speaker.speak(key, "नमस्ते! मैं विद्या हूँ। कहिए, मैं आपकी क्या मदद करूँ?", store.ttsVoice) {
+                voiceTestMsg = "बोल रही हूँ…"
+            }
+            voiceTestMsg = if (ok) "" else "Gemini आवाज़ नहीं मिली (limit या model की दिक्कत)। थोड़ी देर बाद कोशिश करें।"
+        }
+    }
 
     val savedGemini: String get() = store.geminiKey
     val savedSearch: String get() = store.searchKey

@@ -15,6 +15,7 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vidya.ai.core.GeminiClient
+import com.vidya.ai.core.GeminiSpeaker
 import com.vidya.ai.core.LangUtil
 import com.vidya.ai.core.MicPermission
 import com.vidya.ai.core.NetworkMonitor
@@ -24,17 +25,19 @@ import com.vidya.ai.data.ChatMessage
 import com.vidya.ai.data.ChatRepository
 import com.vidya.ai.data.Conversation
 import com.vidya.ai.ui.components.OrbState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
@@ -52,6 +55,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private val store = SecureStore(app)
     private val repo = ChatRepository(app)
     private val gemini = GeminiClient()
+    private val speaker = GeminiSpeaker()
+    private val recorder = VoiceRecorder()
     private val main = Handler(Looper.getMainLooper())
     private val ids = AtomicLong(System.currentTimeMillis())
 
@@ -69,39 +74,19 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     val dialogEvents = _dialogEvents.receiveAsFlow()
     val speechLang: String get() = store.sttLang
 
-    fun onDialogResult(text: String) = send(text, voice = true)
-    fun onDialogCancel() = setOrb(OrbState.Idle)
-
-    private fun switchToDialog() {
-        store.useDialog = true
-        _ui.update { it.copy(error = "In-app mic नहीं चला, इसलिए Google की voice window से सुन रही हूँ।") }
-        startListening()
-    }
-
-    private val recorder = VoiceRecorder()
     private var recJob: Job? = null
-
+    private var speakJob: Job? = null
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var job: Job? = null
     private var voiceTurn = false
+    private var sttAttempt = 0
+    private var resultDelivered = false
 
     init {
         refreshHistory()
-        tts = TextToSpeech(app) { status ->
-            ttsReady = status == TextToSpeech.SUCCESS
-            if (ttsReady) {
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) { setOrb(OrbState.Speaking) }
-                    override fun onDone(utteranceId: String?) {
-                        if (utteranceId == LAST_UTTERANCE) main.post { onSpeakDone() }
-                    }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) { main.post { onSpeakDone() } }
-                })
-            }
-        }
+        initTts("com.google.android.tts")      // Google's neural voices; falls back to default engine
     }
 
     // ---------- helpers ----------
@@ -133,6 +118,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             return
         }
         tts?.stop()
+        speakJob?.cancel()
         voiceTurn = voice
         val now = System.currentTimeMillis()
         val conv = _ui.value.conv
@@ -181,7 +167,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun openConversation(id: String) {
         viewModelScope.launch {
-            val c = kotlinx.coroutines.withContext(Dispatchers.IO) { repo.load(id) } ?: return@launch
+            val c = withContext(Dispatchers.IO) { repo.load(id) } ?: return@launch
             stop()
             _ui.update { it.copy(conv = c, error = null) }
         }
@@ -203,14 +189,14 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         newChat()
     }
 
-    // ---------- voice ----------
+    // ---------- voice input ----------
     fun toggleHandsFree() = _ui.update { it.copy(handsFree = !it.handsFree) }
 
     fun toggleMic() {
         when (_ui.value.orb) {
             OrbState.Listening ->
                 if (store.voiceEngine == "gemini") recorder.finish() else recognizer?.stopListening()
-            OrbState.Speaking -> { tts?.stop(); startListening() }   // interrupt the AI
+            OrbState.Speaking -> { tts?.stop(); speakJob?.cancel(); startListening() }   // interrupt the AI
             OrbState.Thinking -> stop()
             OrbState.Idle -> startListening()
         }
@@ -219,9 +205,19 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     fun stop() {
         job?.cancel()
         recJob?.cancel()
+        speakJob?.cancel()
         tts?.stop()
         recognizer?.cancel()
         _ui.update { it.copy(orb = OrbState.Idle, busy = false, partial = "") }
+    }
+
+    fun onDialogResult(text: String) = send(text, voice = true)
+    fun onDialogCancel() = setOrb(OrbState.Idle)
+
+    private fun switchToDialog() {
+        store.useDialog = true
+        _ui.update { it.copy(error = "In-app mic नहीं चला, इसलिए Google की voice window से सुन रही हूँ।") }
+        startListening()
     }
 
     /** Default voice path: record with our own mic permission, Gemini transcribes. */
@@ -256,9 +252,6 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
         }
     }
-
-    private var sttAttempt = 0
-    private var resultDelivered = false
 
     /** Speech services to try in order: (service, null = system default; pass language?) */
     private fun sttPlans(): List<Pair<ComponentName?, Boolean>> = buildList {
@@ -328,7 +321,6 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 SpeechRecognizer.ERROR_CLIENT,
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> Unit
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                    // App permission is fine -> the speech service (Google app) is the problem.
                     if (MicPermission.has(app)) switchToDialog()
                     else showError("Mic permission चाहिए। Settings tab में दें।")
                 }
@@ -353,19 +345,78 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- speaking ----------
+    private fun initTts(engine: String?) {
+        val onInit = TextToSpeech.OnInitListener { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                ttsReady = true
+                tts?.setSpeechRate(0.95f)
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) { setOrb(OrbState.Speaking) }
+                    override fun onDone(utteranceId: String?) {
+                        if (utteranceId == LAST_UTTERANCE) main.post { onSpeakDone() }
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) { main.post { onSpeakDone() } }
+                })
+            } else if (engine != null) {
+                tts?.shutdown()
+                tts = null
+                ttsReady = false
+                initTts(null)
+            }
+        }
+        tts = if (engine != null) TextToSpeech(app, onInit, engine) else TextToSpeech(app, onInit)
+    }
+
     fun speakMessage(text: String) {
         voiceTurn = false
         speak(text)
     }
 
     private fun speak(text: String) {
-        val t = tts
         val clean = LangUtil.stripMarkdown(text)
-        if (t == null || !ttsReady || clean.isBlank()) { onSpeakDone(); return }
-        val r = t.setLanguage(LangUtil.detect(clean, store.sttLang))
+        if (clean.isBlank()) { onSpeakDone(); return }
+        val key = store.geminiKey
+        if (store.ttsEngine == "gemini" && key.isNotBlank()) {
+            speakJob?.cancel()
+            setOrb(OrbState.Thinking)
+            speakJob = viewModelScope.launch {
+                val ok = try {
+                    speaker.speak(key, clean, store.ttsVoice) { setOrb(OrbState.Speaking) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    false
+                }
+                if (ok) onSpeakDone()
+                else {
+                    showError("Gemini आवाज़ नहीं मिली (limit?), इसलिए फ़ोन की आवाज़ इस्तेमाल हुई।")
+                    speakWithAndroid(clean)
+                }
+            }
+        } else {
+            speakWithAndroid(clean)
+        }
+    }
+
+    private fun speakWithAndroid(clean: String) {
+        val t = tts
+        if (t == null || !ttsReady) { onSpeakDone(); return }
+        val loc = LangUtil.detect(clean, store.sttLang)
+        val r = t.setLanguage(loc)
         if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
             showError("इस भाषा की voice फ़ोन में install नहीं है। Phone Settings → Text-to-speech में voice data डाउनलोड करें।")
+        } else {
+            try {
+                val cands = t.voices.orEmpty().filter {
+                    it.locale.language == loc.language && !it.features.contains("notInstalled")
+                }
+                val best = cands.filter { it.locale.country == loc.country }.ifEmpty { cands }
+                    .maxByOrNull { it.quality }
+                if (best != null) t.voice = best
+            } catch (e: Exception) { /* keep default voice */ }
         }
+        t.setPitch(1.0f)
         val chunks = chunk(clean)
         chunks.forEachIndexed { i, c ->
             val last = i == chunks.lastIndex

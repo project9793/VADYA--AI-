@@ -22,7 +22,7 @@ class GeminiClient {
         append("You are VIDYA AI, a friendly, accurate personal assistant. ")
         append("Reply in the same language the user writes in (Hindi, Hinglish, English or any other). ")
         append("Do not use markdown symbols like ** or #. Use plain text. ")
-        if (voice) append("This is a spoken conversation: answer in 1 to 3 short, natural sentences unless asked for detail. ")
+        if (voice) append("This is a spoken conversation: answer in 1 to 3 short, natural sentences unless asked for detail. If the user speaks Hindi or Hinglish, reply in Hindi written in Devanagari script, never in Roman letters, so the voice pronounces it correctly. ")
         else append("Be clear and well organised; use short paragraphs or numbered lines. Use code blocks only when writing code. ")
         append("If you are not sure about a fact, say so instead of guessing.")
     }
@@ -57,7 +57,7 @@ class GeminiClient {
     /** Speech-to-text using Gemini audio understanding (works without Google's speech service). */
     suspend fun transcribe(apiKey: String, model: String, wav: ByteArray, lang: String): Result<String> {
         val prompt = "Transcribe this audio exactly as spoken. Keep the original language " +
-            "(write Hindi in Devanagari script, other Indian languages in their own script). " +
+            "(write Hindi and Hinglish speech in Devanagari script, other Indian languages in their own script). " +
             "The speaker most likely uses language tag $lang. " +
             "Output ONLY the transcript, with no quotes or comments. " +
             "If there is no clear human speech, output exactly [NO_SPEECH]."
