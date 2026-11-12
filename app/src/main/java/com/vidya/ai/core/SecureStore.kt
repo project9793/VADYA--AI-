@@ -31,6 +31,11 @@ class SecureStore(context: Context) {
         get() = prefs.getString("stt_lang", "hi-IN") ?: "hi-IN"
         set(v) = prefs.edit().putString("stt_lang", v).apply()
 
+    /** Use Google's voice window instead of the in-app recognizer. */
+    var useDialog: Boolean
+        get() = prefs.getBoolean("use_dialog", false)
+        set(v) = prefs.edit().putBoolean("use_dialog", v).apply()
+
     companion object {
         const val DEFAULT_MODEL = "gemini-2.5-flash"
     }

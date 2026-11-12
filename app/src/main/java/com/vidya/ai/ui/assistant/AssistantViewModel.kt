@@ -16,6 +16,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vidya.ai.core.GeminiClient
 import com.vidya.ai.core.LangUtil
+import com.vidya.ai.core.MicPermission
 import com.vidya.ai.core.NetworkMonitor
 import com.vidya.ai.core.SecureStore
 import com.vidya.ai.data.ChatMessage
@@ -24,6 +25,8 @@ import com.vidya.ai.data.Conversation
 import com.vidya.ai.ui.components.OrbState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -59,6 +62,20 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
     val online: StateFlow<Boolean> = NetworkMonitor(app).isOnline
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    // Fallback: Google's own voice window (launched from the UI layer)
+    private val _dialogEvents = Channel<Unit>(Channel.BUFFERED)
+    val dialogEvents = _dialogEvents.receiveAsFlow()
+    val speechLang: String get() = store.sttLang
+
+    fun onDialogResult(text: String) = send(text, voice = true)
+    fun onDialogCancel() = setOrb(OrbState.Idle)
+
+    private fun switchToDialog() {
+        store.useDialog = true
+        _ui.update { it.copy(error = "In-app mic नहीं चला, इसलिए Google की voice window से सुन रही हूँ।") }
+        startListening()
+    }
 
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
@@ -215,6 +232,11 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     private fun startListening(attempt: Int = 0) {
+        if (store.useDialog) {
+            _ui.update { it.copy(orb = OrbState.Listening, partial = "") }
+            _dialogEvents.trySend(Unit)
+            return
+        }
         if (!SpeechRecognizer.isRecognitionAvailable(app)) {
             showError("इस फ़ोन में speech recognition उपलब्ध नहीं है। Google app install/update करें।")
             return
@@ -265,15 +287,18 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
                 SpeechRecognizer.ERROR_CLIENT,
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> Unit
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-                    showError("Mic permission चाहिए। Settings tab में दें।")
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                    // App permission is fine -> the speech service (Google app) is the problem.
+                    if (MicPermission.has(app)) switchToDialog()
+                    else showError("Mic permission चाहिए। Settings tab में दें।")
+                }
                 11, 12, 13 -> {   // server disconnected / language not supported / unavailable
                     if (sttAttempt + 1 < sttPlans().size) {
                         val next = sttAttempt + 1
                         _ui.update { it.copy(orb = OrbState.Listening) }
                         main.postDelayed({ startListening(next) }, 400)
                     } else {
-                        showError("इस फ़ोन की speech service (code $error) काम नहीं कर रही। Google app update करें और Google app → Settings → Voice → Languages में Hindi download करें। तब तक text लिखकर पूछिए।")
+                        switchToDialog()
                     }
                 }
                 SpeechRecognizer.ERROR_AUDIO ->

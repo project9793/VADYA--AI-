@@ -3,6 +3,7 @@ package com.vidya.ai.core
 import com.vidya.ai.data.ChatMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10,9 +11,9 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.SocketTimeoutException
+import java.net.URL
 import java.net.UnknownHostException
 import javax.net.ssl.SSLException
-import java.net.URL
 
 class GeminiClient {
 
@@ -25,53 +26,81 @@ class GeminiClient {
         append("If you are not sure about a fact, say so instead of guessing.")
     }
 
+    private fun buildBody(history: List<ChatMessage>, voice: Boolean): String {
+        // Gemini wants alternating roles starting with "user": merge same-role neighbours.
+        val merged = mutableListOf<Pair<String, String>>()
+        history.takeLast(24).dropWhile { it.role != "user" }.forEach { m ->
+            val last = merged.lastOrNull()
+            if (last != null && last.first == m.role) {
+                merged[merged.lastIndex] = last.first to (last.second + "\n" + m.text)
+            } else merged.add(m.role to m.text)
+        }
+        val contents = JSONArray()
+        merged.forEach { (role, text) ->
+            contents.put(
+                JSONObject().put("role", role)
+                    .put("parts", JSONArray().put(JSONObject().put("text", text)))
+            )
+        }
+        return JSONObject()
+            .put("systemInstruction", JSONObject().put("parts",
+                JSONArray().put(JSONObject().put("text", systemPrompt(voice)))))
+            .put("contents", contents)
+            .toString()
+    }
+
+    private fun post(apiKey: String, model: String, body: String): Pair<Int, String> {
+        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 60_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("x-goog-api-key", apiKey)
+        }
+        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        val code = conn.responseCode
+        val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)
+            ?.bufferedReader()?.use { it.readText() } ?: ""
+        conn.disconnect()
+        return code to raw
+    }
+
+    /**
+     * Tries the chosen model first. If the server is busy (5xx) it retries once,
+     * and if a model is busy / over quota / missing it falls back to lighter models.
+     */
     suspend fun generate(
         apiKey: String, model: String, history: List<ChatMessage>, voice: Boolean
     ): Result<String> = withContext(Dispatchers.IO) {
+        val models = listOf(model, "gemini-2.5-flash-lite", "gemini-3.1-flash-lite").distinct()
+        val body = buildBody(history, voice)
+        var firstError: Exception? = null
         try {
-            // Gemini wants alternating roles starting with "user": merge same-role neighbours.
-            val merged = mutableListOf<Pair<String, String>>()
-            history.takeLast(24).dropWhile { it.role != "user" }.forEach { m ->
-                val last = merged.lastOrNull()
-                if (last != null && last.first == m.role) {
-                    merged[merged.lastIndex] = last.first to (last.second + "\n" + m.text)
-                } else merged.add(m.role to m.text)
+            for (m in models) {
+                var attempt = 0
+                while (attempt < 2) {
+                    val (code, raw) = post(apiKey, m, body)
+                    if (code in 200..299) return@withContext Result.success(parse(raw))
+                    if (firstError == null) firstError = Exception(friendly(code, raw))
+                    if (code in 500..504) {
+                        attempt++
+                        if (attempt < 2) delay(1500)
+                    } else if (code == 404 || code == 429) {
+                        break                       // try the next model
+                    } else {
+                        return@withContext Result.failure(Exception(friendly(code, raw)))
+                    }
+                }
             }
-            val contents = JSONArray()
-            merged.forEach { (role, text) ->
-                contents.put(
-                    JSONObject().put("role", role)
-                        .put("parts", JSONArray().put(JSONObject().put("text", text)))
-                )
-            }
-            val body = JSONObject()
-                .put("systemInstruction", JSONObject().put("parts",
-                    JSONArray().put(JSONObject().put("text", systemPrompt(voice)))))
-                .put("contents", contents)
-
-            val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 20_000
-                readTimeout = 60_000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("x-goog-api-key", apiKey)
-            }
-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                ?.bufferedReader()?.use { it.readText() } ?: ""
-            conn.disconnect()
-
-            if (code !in 200..299) Result.failure(Exception(friendly(code, raw)))
-            else Result.success(parse(raw))
+            Result.failure(firstError ?: Exception("जवाब नहीं मिला।"))
         } catch (e: CancellationException) {
             throw e
         } catch (e: UnknownHostException) {
-            Result.failure(Exception("Gemini server का पता नहीं मिल रहा (DNS)। VPN / Private DNS / ad-block बंद करें, या WiFi ↔ mobile data बदलकर देखें। फिर Settings → Connection test चलाइए।"))
+            Result.failure(Exception("Gemini server का पता नहीं मिल रहा (DNS)। VPN / Private DNS / ad-block बंद करें, या WiFi ↔ mobile data बदलकर देखें।"))
         } catch (e: SocketTimeoutException) {
-            Result.failure(Exception("Server से जवाब आने में बहुत देर लगी (timeout)। Network slow है, दोबारा कोशिश करें।"))
+            Result.failure(Exception("Server से जवाब आने में बहुत देर लगी (timeout)। दोबारा कोशिश करें।"))
         } catch (e: SSLException) {
             Result.failure(Exception("सुरक्षित connection (SSL) नहीं बन पाया। फ़ोन की date/time जाँचें और VPN/proxy बंद करें।"))
         } catch (e: IOException) {
@@ -130,7 +159,7 @@ class GeminiClient {
             401, 403 -> "API key को permission नहीं मिली। Key जाँचिए।"
             404 -> "Model का नाम सही नहीं है। Settings में model बदलिए (जैसे gemini-2.5-flash)।"
             429 -> "Free limit पूरी हो गई। थोड़ी देर बाद कोशिश करें।"
-            in 500..599 -> "Gemini server अभी busy है। थोड़ी देर बाद कोशिश करें।"
+            in 500..599 -> "Gemini server अभी busy है (app ने दूसरे model भी आज़माए)। थोड़ी देर बाद कोशिश करें।"
             else -> "Error $code"
         }
         return if (detail.isNotBlank()) "$head\n($detail)" else head

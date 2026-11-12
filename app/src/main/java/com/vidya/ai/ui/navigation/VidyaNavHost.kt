@@ -1,6 +1,13 @@
 package com.vidya.ai.ui.navigation
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -30,6 +37,29 @@ private enum class Tab(val route: String, val label: String, val icon: ImageVect
 @Composable
 fun VidyaNavHost() {
     val vm: AssistantViewModel = viewModel()
+
+    val dialogLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { r ->
+        val t = r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        if (r.resultCode == Activity.RESULT_OK && !t.isNullOrBlank()) vm.onDialogResult(t)
+        else vm.onDialogCancel()
+    }
+    LaunchedEffect(Unit) {
+        vm.dialogEvents.collect {
+            val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, vm.speechLang)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "बोलिए…")
+            }
+            try {
+                dialogLauncher.launch(i)
+            } catch (e: ActivityNotFoundException) {
+                vm.showError("इस फ़ोन में Google voice input उपलब्ध नहीं है। Google app install/update करें।")
+                vm.onDialogCancel()
+            }
+        }
+    }
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination?.route

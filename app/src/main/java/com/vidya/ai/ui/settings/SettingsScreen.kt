@@ -41,6 +41,7 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
         ActivityResultContracts.RequestPermission()
     ) { micGranted = it }
     var lang by remember { mutableStateOf(vm.sttLang) }
+    var useDialog by remember { mutableStateOf(vm.useDialog) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -52,6 +53,14 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Microphone", style = MaterialTheme.typography.titleMedium)
                 Text(if (micGranted) "✔ Permission मिल चुकी है" else "Permission अभी नहीं दी गई")
+                OutlinedButton(onClick = {
+                    ctx.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", "com.google.android.googlequicksearchbox", null))
+                    )
+                }) { Text("Google app की mic permission जाँचें") }
+                Text("बोलना सुनने का काम Google app करता है, इसलिए उसे भी Microphone allow होना चाहिए।",
+                    style = MaterialTheme.typography.bodySmall)
                 if (!micGranted) {
                     Button(onClick = { launcher.launch(android.Manifest.permission.RECORD_AUDIO) }) {
                         Text("Mic permission दें")
@@ -80,6 +89,17 @@ fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
                         )
                     }
                 }
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Google voice window से बोलें", style = MaterialTheme.typography.titleMedium)
+                    Text("In-app mic में error आए तो इसे चालू करें। (error आने पर app इसे खुद चालू कर देता है)",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = useDialog, onCheckedChange = { useDialog = it; vm.useDialog = it })
             }
         }
 

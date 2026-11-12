@@ -21,6 +21,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         get() = store.sttLang
         set(v) { store.sttLang = v }
 
+    var useDialog: Boolean
+        get() = store.useDialog
+        set(v) { store.useDialog = v }
+
     fun saveGemini(key: String) { store.geminiKey = key.trim() }
     fun saveSearch(key: String) { store.searchKey = key.trim() }
     fun saveModel(m: String) { store.model = m }
