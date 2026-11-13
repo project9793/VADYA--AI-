@@ -53,8 +53,8 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun updateTtsEngine(v: String) { store.ttsEngine = v; ttsEngine = v }
     fun updateTtsVoice(v: String) { store.ttsVoice = v; ttsVoice = v }
-    fun setSarvamVoice(v: String) { store.sarvamVoice = v; sarvamVoice = v }
-    fun setPrimaryAi(v: String) { store.primaryAi = v; primaryAi = v }
+    fun updateSarvamVoice(v: String) { store.sarvamVoice = v; sarvamVoice = v }
+    fun updatePrimaryAi(v: String) { store.primaryAi = v; primaryAi = v }
     fun updateLang(v: String) { store.sttLang = v; sttLang = v }
     fun updateVoiceEngine(v: String) { store.voiceEngine = v; voiceEngine = v }
     fun updateSearchEnabled(v: Boolean) { store.searchEnabled = v; searchEnabled = v }

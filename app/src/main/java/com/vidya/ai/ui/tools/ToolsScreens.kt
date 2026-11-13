@@ -216,7 +216,7 @@ fun VoiceScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                         SARVAM_VOICES.forEach { v ->
                             FilterChip(
                                 selected = tools.sarvamVoice == v,
-                                onClick = { tools.setSarvamVoice(v) },
+                                onClick = { tools.updateSarvamVoice(v) },
                                 label = { Text(v) }
                             )
                         }
@@ -356,12 +356,12 @@ fun ApiKeyScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = tools.primaryAi == "groq",
-                        onClick = { tools.setPrimaryAi("groq") },
+                        onClick = { tools.updatePrimaryAi("groq") },
                         label = { Text("Groq पहले (सुझाया)") }
                     )
                     FilterChip(
                         selected = tools.primaryAi == "gemini",
-                        onClick = { tools.setPrimaryAi("gemini") },
+                        onClick = { tools.updatePrimaryAi("gemini") },
                         label = { Text("Gemini पहले") }
                     )
                 }
