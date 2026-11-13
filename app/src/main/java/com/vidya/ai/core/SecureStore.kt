@@ -46,6 +46,23 @@ class SecureStore(context: Context) {
         get() = prefs.getString("memory", "[]") ?: "[]"
         set(v) = prefs.edit().putString("memory", v).apply()
 
+    var groqKey: String
+        get() = prefs.getString("groq_key", "") ?: ""
+        set(v) = prefs.edit().putString("groq_key", v).apply()
+
+    var sarvamKey: String
+        get() = prefs.getString("sarvam_key", "") ?: ""
+        set(v) = prefs.edit().putString("sarvam_key", v).apply()
+
+    /** Which AI answers first: "groq" or "gemini" (the other one is the automatic backup). */
+    var primaryAi: String
+        get() = prefs.getString("primary_ai", "groq") ?: "groq"
+        set(v) = prefs.edit().putString("primary_ai", v).apply()
+
+    var sarvamVoice: String
+        get() = prefs.getString("sarvam_voice", "anushka") ?: "anushka"
+        set(v) = prefs.edit().putString("sarvam_voice", v).apply()
+
     /** BCP-47 tag used for speech recognition, e.g. hi-IN */
     var sttLang: String
         get() = prefs.getString("stt_lang", "hi-IN") ?: "hi-IN"
@@ -58,7 +75,7 @@ class SecureStore(context: Context) {
 
     /** "gemini" = natural Gemini voice, "android" = phone's own text-to-speech */
     var ttsEngine: String
-        get() = prefs.getString("tts_engine", "gemini") ?: "gemini"
+        get() = prefs.getString("tts_engine", "sarvam") ?: "sarvam"
         set(v) = prefs.edit().putString("tts_engine", v).apply()
 
     var ttsVoice: String

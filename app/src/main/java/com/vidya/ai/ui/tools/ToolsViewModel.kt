@@ -9,6 +9,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vidya.ai.core.GeminiClient
 import com.vidya.ai.core.GeminiSpeaker
+import com.vidya.ai.core.GroqClient
+import com.vidya.ai.core.SarvamSpeaker
 import com.vidya.ai.core.SecureStore
 import com.vidya.ai.data.MemoryItem
 import com.vidya.ai.data.MemoryRepository
@@ -18,21 +20,29 @@ import kotlinx.coroutines.launch
 class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     private val store = SecureStore(app)
     private val gemini = GeminiClient()
+    private val groq = GroqClient()
     private val speaker = GeminiSpeaker()
+    private val sarvam = SarvamSpeaker()
     private val memRepo = MemoryRepository(store)
 
     var userName by mutableStateOf(store.userName); private set
     var assistantName by mutableStateOf(store.assistantName); private set
     var ttsEngine by mutableStateOf(store.ttsEngine); private set
     var ttsVoice by mutableStateOf(store.ttsVoice); private set
+    var sarvamVoice by mutableStateOf(store.sarvamVoice); private set
+    var primaryAi by mutableStateOf(store.primaryAi); private set
     var sttLang by mutableStateOf(store.sttLang); private set
     var voiceEngine by mutableStateOf(store.voiceEngine); private set
     var searchEnabled by mutableStateOf(store.searchEnabled); private set
     var memoryEnabled by mutableStateOf(store.memoryEnabled); private set
     var hasGeminiKey by mutableStateOf(store.geminiKey.isNotBlank()); private set
+    var hasGroqKey by mutableStateOf(store.groqKey.isNotBlank()); private set
+    var hasSarvamKey by mutableStateOf(store.sarvamKey.isNotBlank()); private set
     val memories = mutableStateListOf<MemoryItem>().also { it.addAll(memRepo.all()) }
 
     val savedGemini: String get() = store.geminiKey
+    val savedGroq: String get() = store.groqKey
+    val savedSarvam: String get() = store.sarvamKey
     val savedSearch: String get() = store.searchKey
     val savedModel: String get() = store.model
 
@@ -43,12 +53,16 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun updateTtsEngine(v: String) { store.ttsEngine = v; ttsEngine = v }
     fun updateTtsVoice(v: String) { store.ttsVoice = v; ttsVoice = v }
+    fun setSarvamVoice(v: String) { store.sarvamVoice = v; sarvamVoice = v }
+    fun setPrimaryAi(v: String) { store.primaryAi = v; primaryAi = v }
     fun updateLang(v: String) { store.sttLang = v; sttLang = v }
     fun updateVoiceEngine(v: String) { store.voiceEngine = v; voiceEngine = v }
     fun updateSearchEnabled(v: Boolean) { store.searchEnabled = v; searchEnabled = v }
     fun updateMemoryEnabled(v: Boolean) { store.memoryEnabled = v; memoryEnabled = v }
 
     fun saveGemini(key: String) { store.geminiKey = key.trim(); hasGeminiKey = store.geminiKey.isNotBlank() }
+    fun saveGroq(key: String) { store.groqKey = key.trim(); hasGroqKey = store.groqKey.isNotBlank() }
+    fun saveSarvam(key: String) { store.sarvamKey = key.trim(); hasSarvamKey = store.sarvamKey.isNotBlank() }
     fun saveSearch(key: String) { store.searchKey = key.trim() }
     fun saveModel(m: String) { store.model = m }
 
@@ -64,25 +78,46 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     var voiceTestMsg by mutableStateOf(""); private set
 
     fun runTest() {
-        if (store.geminiKey.isBlank()) { testResult = "पहले Gemini API key डालकर Save करें।"; return }
+        val g = store.geminiKey
+        val q = store.groqKey
+        if (g.isBlank() && q.isBlank()) { testResult = "पहले कोई key डालकर Save करें।"; return }
         testing = true
         testResult = ""
         viewModelScope.launch {
-            testResult = gemini.diagnose(store.geminiKey)
+            val sb = StringBuilder()
+            if (q.isNotBlank()) sb.append("Groq: ").append(groq.diagnose(q)).append("\n\n")
+            if (g.isNotBlank()) sb.append("Gemini:\n").append(gemini.diagnose(g))
+            testResult = sb.toString().trim()
             testing = false
         }
     }
 
     fun testVoice() {
-        val key = store.geminiKey
-        if (key.isBlank()) { voiceTestMsg = "पहले Tools → API Key में Gemini key डालें।"; return }
+        val engine = store.ttsEngine
+        if (engine == "android") {
+            voiceTestMsg = "फ़ोन की आवाज़ जवाब बोलते समय सुनाई देगी।"
+            return
+        }
         voiceTestMsg = "आवाज़ बन रही है…"
         viewModelScope.launch {
             val text = "नमस्ते! मैं ${store.assistantName} हूँ। कहिए, मैं आपकी क्या मदद करूँ?"
-            val played = speaker.speak(key, speaker.chunksOf(text), store.ttsVoice) {
-                voiceTestMsg = "बोल रही हूँ…"
+            val chunks = speaker.chunksOf(text)
+            var played = 0
+            val order = if (engine == "sarvam") listOf("sarvam", "gemini") else listOf("gemini", "sarvam")
+            for (e in order) {
+                if (played > 0) break
+                if (e == "sarvam" && store.sarvamKey.isNotBlank()) {
+                    played = sarvam.speak(store.sarvamKey, chunks, store.sarvamVoice, "hi-IN") {
+                        voiceTestMsg = "बोल रही हूँ…"
+                    }
+                }
+                if (e == "gemini" && store.geminiKey.isNotBlank()) {
+                    played = speaker.speak(store.geminiKey, chunks, store.ttsVoice) {
+                        voiceTestMsg = "बोल रही हूँ…"
+                    }
+                }
             }
-            voiceTestMsg = if (played > 0) "" else "Gemini आवाज़ नहीं मिली (limit या model की दिक्कत)। थोड़ी देर बाद कोशिश करें।"
+            voiceTestMsg = if (played > 0) "" else "आवाज़ नहीं मिली: key या limit जाँचें (Tools → API Key)।"
         }
     }
 }

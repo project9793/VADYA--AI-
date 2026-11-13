@@ -26,7 +26,7 @@ class GeminiClient {
     /** True when Google Search had to be dropped for the last request. */
     @Volatile var lastSearchDropped = false
 
-    private fun systemPrompt(voice: Boolean, extra: String) = buildString {
+    fun systemPrompt(voice: Boolean, extra: String) = buildString {
         append("You are a friendly, accurate personal assistant inside the VIDYA AI app. ")
         append("Reply in the same language the user writes in (Hindi, Hinglish, English or any other). ")
         append("Do not use markdown symbols like ** or #. Use plain text. ")
@@ -94,18 +94,7 @@ class GeminiClient {
 
     /** Turns a spoken phone-control request into JSON (call, whatsapp, open_app, ...). */
     suspend fun parseCommand(apiKey: String, model: String, text: String): Result<JSONObject> {
-        val prompt = "You convert a spoken phone-control request (Hindi, Hinglish, English or any Indian language) into JSON. " +
-            "Return ONLY JSON with the keys: action, name, name_en, number, message, app, query. " +
-            "action must be one of: call, end_call, whatsapp, open_app, youtube_search, play_music, none. " +
-            "call = place a phone call (name = contact name as spoken, name_en = the same name in Roman letters, " +
-            "number = digits if the user said a number). end_call = hang up / cut the current call. " +
-            "whatsapp = send a WhatsApp message (name, name_en, number as above; message = the text to send, or empty). " +
-            "open_app = open an app (app is one of: whatsapp, youtube, youtube_music, chrome, maps, instagram, " +
-            "facebook, telegram, spotify, gmail, camera, settings, photos, dialer, other). " +
-            "youtube_search = search or show videos on YouTube (query = search text). " +
-            "play_music = play a song, music or video by name or artist (query = what to play). " +
-            "none = anything else such as questions, chat or information requests. Unused fields are empty strings. " +
-            "User request: " + JSONObject.quote(text)
+        val prompt = DeviceControl.prompt(text)
         val m = SecureStore.sanitizeModel(model)
         val r = execute(apiKey, listOf(lite, m, lite3).distinct(), false, null) { mm, _ ->
             val gen = JSONObject().put("responseMimeType", "application/json")
@@ -222,15 +211,17 @@ class GeminiClient {
     ): Result<String> = withContext(Dispatchers.IO) {
         var useTools = tools
         lastSearchDropped = false
+        val keys = Keys.list(apiKey).ifEmpty { listOf(apiKey) }
         var firstError: Exception? = null
         try {
             for (m in models) {
+                var ki = 0
                 var attempt = 0
                 while (attempt < 2) {
                     val body = build(m, useTools)
                     val (code, raw) =
-                        if (onPartial != null) postStream(apiKey, m, body, onPartial)
-                        else post(apiKey, m, body)
+                        if (onPartial != null) postStream(keys[ki], m, body, onPartial)
+                        else post(keys[ki], m, body)
                     if (code in 200..299) return@withContext Result.success(parse(raw))
                     if (firstError == null) firstError = Exception(friendly(code, raw))
                     val badModel = code == 400 && raw.contains("GenerateContentRequest.model")
@@ -244,6 +235,8 @@ class GeminiClient {
                     if (code in 500..504) {
                         attempt++
                         if (attempt < 2) delay(600)
+                    } else if (code == 429 && ki + 1 < keys.size) {
+                        ki++                          // next API key
                     } else if (code == 404 || code == 429 || badModel) {
                         break                         // next model
                     } else {
@@ -280,7 +273,7 @@ class GeminiClient {
             val conn = (URL("https://$host/v1beta/models?pageSize=1").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15_000
                 readTimeout = 15_000
-                setRequestProperty("x-goog-api-key", apiKey)
+                setRequestProperty("x-goog-api-key", Keys.list(apiKey).firstOrNull() ?: apiKey)
             }
             val code = conn.responseCode
             val raw = (if (code in 200..299) conn.inputStream else conn.errorStream)

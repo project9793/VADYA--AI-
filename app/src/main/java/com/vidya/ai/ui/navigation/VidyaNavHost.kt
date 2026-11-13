@@ -7,6 +7,7 @@ import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -92,6 +93,7 @@ fun VidyaNavHost() {
 
     Scaffold(
         containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
         bottomBar = {
             NavigationBar(containerColor = Color(0xF00D1650)) {
                 Tab.entries.forEach { tab ->
@@ -117,7 +119,7 @@ fun VidyaNavHost() {
     ) { padding ->
         NavHost(
             nav, startDestination = Tab.Home.route,
-            modifier = Modifier.padding(padding).consumeWindowInsets(padding)
+            modifier = Modifier.padding(padding).consumeWindowInsets(padding).imePadding()
         ) {
             composable(Tab.Home.route) { HomeScreen(vm, tools, onOpenChat = { go(Tab.Chat.route) }) }
             composable(Tab.Chat.route) { ChatScreen(vm) }

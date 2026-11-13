@@ -55,7 +55,11 @@ fun ToolsHomeScreen(tools: ToolsViewModel, onOpen: (String) -> Unit) {
         ToolCard(Icons.Default.SmartToy, "2. Assistant का नाम",
             tools.assistantName) { onOpen(ToolRoutes.Assistant) }
         ToolCard(Icons.Default.RecordVoiceOver, "3. आवाज़ चुनें",
-            if (tools.ttsEngine == "gemini") "${tools.ttsVoice} · Gemini voice" else "फ़ोन की आवाज़") {
+            when (tools.ttsEngine) {
+                "sarvam" -> "${tools.sarvamVoice} · Sarvam"
+                "gemini" -> "${tools.ttsVoice} · Gemini voice"
+                else -> "फ़ोन की आवाज़"
+            }) {
             onOpen(ToolRoutes.Voice)
         }
         ToolCard(Icons.Default.Language, "4. भाषा (Language)",
@@ -65,7 +69,11 @@ fun ToolsHomeScreen(tools: ToolsViewModel, onOpen: (String) -> Unit) {
             onOpen(ToolRoutes.Memory)
         }
         ToolCard(Icons.Default.VpnKey, "6. API Key",
-            if (tools.hasGeminiKey) "✔ Gemini key सेट है" else "Gemini key नहीं डाली") {
+            listOfNotNull(
+                if (tools.hasGroqKey) "Groq" else null,
+                if (tools.hasGeminiKey) "Gemini" else null,
+                if (tools.hasSarvamKey) "Sarvam" else null
+            ).let { if (it.isEmpty()) "कोई key नहीं डाली" else "✔ " + it.joinToString(" + ") }) {
             onOpen(ToolRoutes.Keys)
         }
         ToolCard(Icons.Default.Security, "7. Permissions",
@@ -164,6 +172,8 @@ fun AssistantNameScreen(tools: ToolsViewModel, onBack: () -> Unit) {
 
 // ---------------------------------------------------------------- 3. voice
 
+private val SARVAM_VOICES = listOf("anushka", "manisha", "vidya", "abhilash", "shubh", "ritu", "priya", "aditya")
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun VoiceScreen(tools: ToolsViewModel, onBack: () -> Unit) {
@@ -172,14 +182,20 @@ fun VoiceScreen(tools: ToolsViewModel, onBack: () -> Unit) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("AI की आवाज़", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Gemini voice इंसानों जैसी स्वाभाविक आवाज़ देती है। Free limit पूरी होने पर app अपने आप फ़ोन की आवाज़ पर लौट जाता है।",
+                    "Sarvam: हिन्दी और दूसरी भारतीय भाषाओं की स्वाभाविक आवाज़। Gemini voice: इंसानों जैसी आवाज़, कई भाषाएँ। " +
+                        "चुनी हुई आवाज़ न चले तो app अपने आप दूसरी (और आख़िर में फ़ोन की आवाज़) पर चला जाता है।",
                     style = MaterialTheme.typography.bodySmall
                 )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
+                        selected = tools.ttsEngine == "sarvam",
+                        onClick = { tools.updateTtsEngine("sarvam") },
+                        label = { Text("Sarvam (भारतीय)") }
+                    )
+                    FilterChip(
                         selected = tools.ttsEngine == "gemini",
                         onClick = { tools.updateTtsEngine("gemini") },
-                        label = { Text("Gemini voice (सुझाया)") }
+                        label = { Text("Gemini voice") }
                     )
                     FilterChip(
                         selected = tools.ttsEngine == "android",
@@ -189,10 +205,29 @@ fun VoiceScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                 }
             }
         }
+        if (tools.ttsEngine == "sarvam") {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Sarvam आवाज़ चुनिए", style = MaterialTheme.typography.titleMedium)
+                    if (!tools.hasSarvamKey) {
+                        Text("पहले Tools → API Key में Sarvam key डालिए।", style = MaterialTheme.typography.bodySmall)
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SARVAM_VOICES.forEach { v ->
+                            FilterChip(
+                                selected = tools.sarvamVoice == v,
+                                onClick = { tools.setSarvamVoice(v) },
+                                label = { Text(v) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
         if (tools.ttsEngine == "gemini") {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("आवाज़ चुनिए", style = MaterialTheme.typography.titleMedium)
+                    Text("Gemini आवाज़ चुनिए", style = MaterialTheme.typography.titleMedium)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TTS_VOICES.forEach { v ->
                             FilterChip(
@@ -202,12 +237,12 @@ fun VoiceScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                             )
                         }
                     }
-                    Button(onClick = tools::testVoice) { Text("आवाज़ सुनकर देखें") }
-                    if (tools.voiceTestMsg.isNotBlank()) {
-                        Text(tools.voiceTestMsg, style = MaterialTheme.typography.bodySmall)
-                    }
                 }
             }
+        }
+        Button(onClick = tools::testVoice) { Text("आवाज़ सुनकर देखें") }
+        if (tools.voiceTestMsg.isNotBlank()) {
+            Text(tools.voiceTestMsg, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -306,12 +341,41 @@ fun MemoryScreen(tools: ToolsViewModel, onBack: () -> Unit) {
 
 // ---------------------------------------------------------------- 6. API keys
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ApiKeyScreen(tools: ToolsViewModel, onBack: () -> Unit) {
     ToolPage("API Key", onBack) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("पहले कौन सा AI जवाब दे?", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "एक की limit खत्म होते ही app अपने आप दूसरे पर चला जाता है, इसलिए app रुकती नहीं। " +
+                        "Groq बहुत तेज़ है और उसकी free limit बड़ी है।",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = tools.primaryAi == "groq",
+                        onClick = { tools.setPrimaryAi("groq") },
+                        label = { Text("Groq पहले (सुझाया)") }
+                    )
+                    FilterChip(
+                        selected = tools.primaryAi == "gemini",
+                        onClick = { tools.setPrimaryAi("gemini") },
+                        label = { Text("Gemini पहले") }
+                    )
+                }
+            }
+        }
+        KeyCard(
+            title = "Groq API key (तेज़, 24 घंटे चलने वाली)",
+            hint = "console.groq.com में Sign in करके API Keys से मुफ़्त key बनाइए (gsk_ से शुरू होती है)। " +
+                "कई keys हों तो comma (,) से अलग करके लिखें, limit पर अगली key लगेगी। आवाज़ पहचानना भी इसी से होगा।",
+            initial = tools.savedGroq, secret = true, onSave = tools::saveGroq
+        )
         KeyCard(
             title = "Gemini API key",
-            hint = "Google AI Studio (aistudio.google.com) से key बनाइए।",
+            hint = "Google AI Studio (aistudio.google.com) से key बनाइए। कई keys हों तो comma (,) से अलग करें।",
             initial = tools.savedGemini, secret = true, onSave = tools::saveGemini
         )
         KeyCard(
@@ -321,14 +385,20 @@ fun ApiKeyScreen(tools: ToolsViewModel, onBack: () -> Unit) {
             resetValue = SecureStore.DEFAULT_MODEL
         )
         KeyCard(
+            title = "Sarvam API key (भारतीय भाषाओं की natural आवाज़)",
+            hint = "dashboard.sarvam.ai पर Google से Sign in करके key लीजिए (नए खाते में मुफ़्त credits मिलते हैं)। " +
+                "यह न हो तो Gemini voice / फ़ोन की आवाज़ चलेगी।",
+            initial = tools.savedSarvam, secret = true, onSave = tools::saveSarvam
+        )
+        KeyCard(
             title = "Search API key (optional)",
-            hint = "इंटरनेट खोज अभी Gemini के अपने Google Search से चलती है। यह key बाद के लिए सुरक्षित रखी जाती है।",
+            hint = "इंटरनेट खोज अभी Google News और Gemini के Google Search से चलती है। यह key बाद के लिए सुरक्षित रखी जाती है।",
             initial = tools.savedSearch, secret = true, onSave = tools::saveSearch
         )
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Connection test", style = MaterialTheme.typography.titleMedium)
-                Text("Gemini से connection और API key जाँचता है।", style = MaterialTheme.typography.bodySmall)
+                Text("Groq और Gemini की key जाँचता है।", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = tools::runTest, enabled = !tools.testing) {
                     Text(if (tools.testing) "जाँच हो रही है…" else "Test करें")
                 }

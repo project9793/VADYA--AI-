@@ -11,6 +11,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,12 +37,15 @@ class MainActivity : ComponentActivity() {
             VidyaTheme {
                 var showSplash by rememberSaveable { mutableStateOf(true) }
                 Box(Modifier.fillMaxSize().background(VidyaGradient)) {
-                    Crossfade(
-                        targetState = showSplash,
-                        animationSpec = tween(500),
-                        label = "splash"
-                    ) { splash ->
-                        if (splash) SplashScreen { showSplash = false } else VidyaNavHost()
+                    // Without this, plain Text() defaults to black on the dark background.
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+                        Crossfade(
+                            targetState = showSplash,
+                            animationSpec = tween(500),
+                            label = "splash"
+                        ) { splash ->
+                            if (splash) SplashScreen { showSplash = false } else VidyaNavHost()
+                        }
                     }
                 }
             }

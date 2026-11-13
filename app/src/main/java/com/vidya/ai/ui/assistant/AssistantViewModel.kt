@@ -18,11 +18,13 @@ import com.vidya.ai.core.DeviceActions
 import com.vidya.ai.core.DeviceControl
 import com.vidya.ai.core.GeminiClient
 import com.vidya.ai.core.GeminiSpeaker
+import com.vidya.ai.core.GroqClient
 import com.vidya.ai.core.LangUtil
 import com.vidya.ai.core.Languages
 import com.vidya.ai.core.LocalAnswers
 import com.vidya.ai.core.MicPermission
 import com.vidya.ai.core.NetworkMonitor
+import com.vidya.ai.core.SarvamSpeaker
 import com.vidya.ai.core.SecureStore
 import com.vidya.ai.core.VoiceRecorder
 import com.vidya.ai.core.WebSearch
@@ -73,6 +75,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private val gemini = GeminiClient()
     private val speaker = GeminiSpeaker()
     private val actions = DeviceActions(app)
+    private val groq = GroqClient()
+    private val sarvam = SarvamSpeaker()
     private val recorder = VoiceRecorder()
     private val main = Handler(Looper.getMainLooper())
     private val ids = AtomicLong(System.currentTimeMillis())
@@ -131,8 +135,9 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         if (msg.isEmpty()) return
         maybeSaveMemory(msg)
         val key = store.geminiKey
-        if (key.isBlank()) {
-            _ui.update { it.copy(orb = OrbState.Idle, error = "पहले Settings में Gemini API key डालिए।") }
+        val groqKey = store.groqKey
+        if (key.isBlank() && groqKey.isBlank()) {
+            _ui.update { it.copy(orb = OrbState.Idle, error = "पहले Tools → API Key में Groq या Gemini key डालिए।") }
             return
         }
         tts?.stop()
@@ -157,7 +162,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             // 2) phone-control commands (call, WhatsApp, YouTube, music, open app ...)
             if (DeviceControl.looksLikeCommand(msg)) {
-                val cmd = gemini.parseCommand(key, store.model, msg).getOrNull()
+                var cmd = if (groqKey.isNotBlank()) groq.parseCommand(groqKey, msg).getOrNull() else null
+                if (cmd == null && key.isNotBlank()) cmd = gemini.parseCommand(key, store.model, msg).getOrNull()
                 if (cmd != null && handleCommand(cmd, voice)) return@launch
             }
             // 3) normal answer; time-sensitive questions get real, fresh web results first
@@ -165,10 +171,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             if (store.searchEnabled && WebSearch.needsFresh(msg)) hits = WebSearch.news(msg)
 
             val modelId = ids.incrementAndGet()
-            val result = gemini.generate(
-                key, store.model, withUser.messages, voice,
-                buildContext() + WebSearch.asContext(hits), store.searchEnabled, nowLine()
-            ) { partial ->
+            val ctx = buildContext() + WebSearch.asContext(hits)
+            val onPartial: (String) -> Unit = { partial ->
                 // answer streams in word by word
                 val ts = System.currentTimeMillis()
                 _ui.update { st ->
@@ -180,12 +184,26 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                     st.copy(conv = st.conv.copy(messages = newMsgs))
                 }
             }
+            // primary AI first; if its limit is over or it fails, the other one takes over automatically
+            val order = if (store.primaryAi == "groq") listOf("groq", "gemini") else listOf("gemini", "groq")
+            var usedProv = ""
+            var result: Result<String> = Result.failure(Exception("कोई AI key नहीं मिली।"))
+            for (prov in order) {
+                if (prov == "groq" && groqKey.isBlank()) continue
+                if (prov == "gemini" && key.isBlank()) continue
+                result = if (prov == "groq") {
+                    groq.generate(groqKey, withUser.messages, voice, gemini.systemPrompt(voice, ctx), nowLine(), onPartial)
+                } else {
+                    gemini.generate(key, store.model, withUser.messages, voice, ctx, store.searchEnabled, nowLine(), onPartial)
+                }
+                if (result.isSuccess) { usedProv = prov; break }
+            }
             result
                 .onSuccess { reply0 ->
                     var reply = reply0
                     if (hits.isNotEmpty() && !reply.contains("\n\nस्रोत:")) {
                         reply += WebSearch.sourcesFooter(hits)
-                    } else if (store.searchEnabled && hits.isEmpty() && gemini.lastSearchDropped &&
+                    } else if (store.searchEnabled && hits.isEmpty() && (usedProv == "groq" || gemini.lastSearchDropped) &&
                         WebSearch.needsFresh(msg)
                     ) {
                         reply += "\n\n⚠ इंटरनेट खोज नहीं चल पाई, यह जवाब पुरानी जानकारी पर आधारित हो सकता है।"
@@ -395,7 +413,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     /** Default voice path: record with our own mic permission, Gemini transcribes. */
     private fun startRecording() {
         val key = store.geminiKey
-        if (key.isBlank()) { showError("पहले Settings में Gemini API key डालिए।"); return }
+        if (key.isBlank() && store.groqKey.isBlank()) { showError("पहले Tools → API Key में Groq या Gemini key डालिए।"); return }
         if (!MicPermission.has(app)) { showError("Mic permission चाहिए। Settings tab में दें।"); return }
         recJob?.cancel()
         _ui.update { it.copy(orb = OrbState.Listening, partial = "", error = null) }
@@ -407,7 +425,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             _ui.update { it.copy(orb = OrbState.Thinking, busy = true, partial = "") }
-            gemini.transcribe(key, store.model, wav, store.sttLang)
+            transcribeSmart(wav)
                 .onSuccess { text ->
                     val t = text.trim()
                     if (t.isBlank() || t.contains("NO_SPEECH")) {
@@ -423,6 +441,16 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                     _ui.update { it.copy(orb = OrbState.Idle, busy = false, error = e.message ?: "Error") }
                 }
         }
+    }
+
+    /** Whisper on Groq first (fast, big free limit); Gemini is the backup. */
+    private suspend fun transcribeSmart(wav: ByteArray): Result<String> {
+        var r: Result<String> = Result.failure(Exception("कोई key नहीं मिली।"))
+        if (store.groqKey.isNotBlank()) r = groq.transcribe(store.groqKey, wav, store.sttLang)
+        if ((r.isFailure || r.getOrNull().isNullOrBlank()) && store.geminiKey.isNotBlank()) {
+            r = gemini.transcribe(store.geminiKey, store.model, wav, store.sttLang)
+        }
+        return r
     }
 
     /** Speech services to try in order: (service, null = system default; pass language?) */
@@ -548,27 +576,38 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun speak(text: String) {
         val clean = LangUtil.stripMarkdown(text)
         if (clean.isBlank()) { onSpeakDone(); return }
-        val key = store.geminiKey
-        if (store.ttsEngine == "gemini" && key.isNotBlank()) {
-            speakJob?.cancel()
-            setOrb(OrbState.Thinking)
-            speakJob = viewModelScope.launch {
-                val chunks = speaker.chunksOf(clean)
+        val pref = store.ttsEngine
+        val engines = if (pref == "android") emptyList() else
+            (listOf(pref) + listOf("sarvam", "gemini")).distinct().filter {
+                (it == "sarvam" && store.sarvamKey.isNotBlank()) || (it == "gemini" && store.geminiKey.isNotBlank())
+            }
+        if (engines.isEmpty()) { speakWithAndroid(clean); return }
+
+        speakJob?.cancel()
+        setOrb(OrbState.Thinking)
+        speakJob = viewModelScope.launch {
+            var chunks = speaker.chunksOf(clean)
+            val langTag = LangUtil.detect(clean, store.sttLang).toLanguageTag()
+            for (e in engines) {
+                if (chunks.isEmpty()) break
                 val played = try {
-                    speaker.speak(key, chunks, store.ttsVoice) { setOrb(OrbState.Speaking) }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
+                    if (e == "sarvam") {
+                        sarvam.speak(store.sarvamKey, chunks, store.sarvamVoice, langTag) { setOrb(OrbState.Speaking) }
+                    } else {
+                        speaker.speak(store.geminiKey, chunks, store.ttsVoice) { setOrb(OrbState.Speaking) }
+                    }
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (ex: Exception) {
                     0
                 }
-                if (played >= chunks.size) onSpeakDone()
-                else {
-                    showError("Gemini आवाज़ नहीं मिली (limit?), बाकी हिस्सा फ़ोन की आवाज़ में बोला।")
-                    speakWithAndroid(chunks.drop(played).joinToString(" "))
-                }
+                chunks = chunks.drop(played)
             }
-        } else {
-            speakWithAndroid(clean)
+            if (chunks.isEmpty()) onSpeakDone()
+            else {
+                showError("स्वाभाविक आवाज़ नहीं मिली (limit या key?), बाकी हिस्सा फ़ोन की आवाज़ में बोला।")
+                speakWithAndroid(chunks.joinToString(" "))
+            }
         }
     }
 

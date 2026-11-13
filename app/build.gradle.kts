@@ -11,8 +11,8 @@ android {
         applicationId = "com.vidya.ai"
         minSdk = 26
         targetSdk = 34
-        versionCode = 112
-        versionName = "12"
+        versionCode = 113
+        versionName = "13"
     }
     signingConfigs {
         // One fixed key committed in the repo, so every build can be installed
