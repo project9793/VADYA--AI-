@@ -37,6 +37,9 @@ class GeminiSpeaker {
             played
         }
 
+    /** One sentence -> audio (blocking). */
+    fun fetchOne(apiKeys: String, text: String, voice: String): AudioPlayer.Audio? = fetch(apiKeys, text, voice)
+
     private fun fetch(apiKeys: String, text: String, voice: String): AudioPlayer.Audio? {
         for (k in Keys.list(apiKeys)) {
             var quota = false
@@ -77,8 +80,8 @@ class GeminiSpeaker {
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 20_000
-            readTimeout = 45_000
+            connectTimeout = 8_000
+            readTimeout = 20_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("x-goog-api-key", apiKey)

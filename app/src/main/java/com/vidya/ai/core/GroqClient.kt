@@ -24,8 +24,8 @@ class GroqClient {
 
     private fun conn(path: String, key: String): HttpURLConnection =
         (URL(base + path).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 60_000
+            connectTimeout = 8_000
+            readTimeout = 25_000
             setRequestProperty("Authorization", "Bearer $key")
             setRequestProperty("User-Agent", "VidyaAI/1.0")
         }
@@ -164,6 +164,7 @@ class GroqClient {
                 for (k in keys) {
                     val c = conn("/audio/transcriptions", k).apply {
                         requestMethod = "POST"
+                        readTimeout = 45_000
                         doOutput = true
                         setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
                     }

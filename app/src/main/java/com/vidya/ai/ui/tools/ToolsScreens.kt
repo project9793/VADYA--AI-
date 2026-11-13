@@ -264,7 +264,7 @@ fun LanguageScreen(tools: ToolsViewModel, onBack: () -> Unit) {
                     Languages.all.forEach { (label, tag) ->
                         FilterChip(
                             selected = tools.sttLang == tag,
-                            onClick = { tools.updateLang(tag) },
+                            onClick = { tools.setLang(tag) },
                             label = { Text(label) }
                         )
                     }

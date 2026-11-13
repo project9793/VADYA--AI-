@@ -14,6 +14,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.vidya.ai.core.AudioPlayer
 import com.vidya.ai.core.DeviceActions
 import com.vidya.ai.core.DeviceControl
 import com.vidya.ai.core.GeminiClient
@@ -26,6 +27,7 @@ import com.vidya.ai.core.MicPermission
 import com.vidya.ai.core.NetworkMonitor
 import com.vidya.ai.core.SarvamSpeaker
 import com.vidya.ai.core.SecureStore
+import com.vidya.ai.core.SpeechQueue
 import com.vidya.ai.core.VoiceRecorder
 import com.vidya.ai.core.WebSearch
 import com.vidya.ai.data.ChatMessage
@@ -36,6 +38,8 @@ import com.vidya.ai.ui.components.OrbState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -61,7 +65,8 @@ data class AssistantUiState(
     val busy: Boolean = false,
     val error: String? = null,
     val handsFree: Boolean = false,
-    val pending: PendingAction? = null
+    val pending: PendingAction? = null,
+    val timing: String = ""
 )
 
 /** A call / WhatsApp message waiting for the user's confirmation. */
@@ -105,6 +110,16 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private var sttAttempt = 0
     private var resultDelivered = false
 
+    // streaming speech: sentences are voiced while the answer is still being written
+    @Volatile private var queue: SpeechQueue? = null
+    private var emitted = 0
+    private var firstChunk = true
+    private var turnStart = 0L
+    private var timingBase = ""
+    private var lastVoiceEngine = ""
+    private var sarvamDownUntil = 0L
+    private var geminiTtsDownUntil = 0L
+
     init {
         refreshHistory()
         initTts("com.google.android.tts")      // Google's neural voices; falls back to default engine
@@ -142,15 +157,20 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         }
         tts?.stop()
         speakJob?.cancel()
+        queue?.cancel()
+        queue = null
+        emitted = 0
+        firstChunk = true
         voiceTurn = voice
         val now = System.currentTimeMillis()
+        turnStart = now
         val conv = _ui.value.conv
         val withUser = conv.copy(
             title = conv.title.ifBlank { msg.take(40) },
             updated = now,
             messages = conv.messages + ChatMessage(ids.incrementAndGet(), "user", msg, now)
         )
-        _ui.update { it.copy(conv = withUser, orb = OrbState.Thinking, busy = true, error = null, pending = null) }
+        _ui.update { it.copy(conv = withUser, orb = OrbState.Thinking, busy = true, error = null, pending = null, timing = "") }
         persist(withUser)
 
         job?.cancel()
@@ -161,19 +181,29 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             // 2) phone-control commands (call, WhatsApp, YouTube, music, open app ...)
+            // the web search starts now and runs while the command check happens (max 2 s)
+            val hitsDeferred = if (store.searchEnabled && WebSearch.needsFresh(msg))
+                async { withTimeoutOrNull(2_000) { WebSearch.news(msg) } ?: emptyList() }
+            else null
             if (DeviceControl.looksLikeCommand(msg)) {
-                var cmd = if (groqKey.isNotBlank()) groq.parseCommand(groqKey, msg).getOrNull() else null
-                if (cmd == null && key.isNotBlank()) cmd = gemini.parseCommand(key, store.model, msg).getOrNull()
-                if (cmd != null && handleCommand(cmd, voice)) return@launch
+                val cmd = withTimeoutOrNull(3_500) {
+                    var c = if (groqKey.isNotBlank()) groq.parseCommand(groqKey, msg).getOrNull() else null
+                    if (c == null && key.isNotBlank()) c = gemini.parseCommand(key, store.model, msg).getOrNull()
+                    c
+                }
+                if (cmd != null && handleCommand(cmd, voice)) {
+                    hitsDeferred?.cancel()
+                    return@launch
+                }
             }
-            // 3) normal answer; time-sensitive questions get real, fresh web results first
-            var hits: List<WebSearch.Hit> = emptyList()
-            if (store.searchEnabled && WebSearch.needsFresh(msg)) hits = WebSearch.news(msg)
+            val hits: List<WebSearch.Hit> = hitsDeferred?.await() ?: emptyList()
 
             val modelId = ids.incrementAndGet()
             val ctx = buildContext() + WebSearch.asContext(hits)
+            val streamSpeech = voice && naturalEngines().isNotEmpty()
+            var tFirst = 0L
             val onPartial: (String) -> Unit = { partial ->
-                // answer streams in word by word
+                if (tFirst == 0L) tFirst = System.currentTimeMillis()
                 val ts = System.currentTimeMillis()
                 _ui.update { st ->
                     val msgs = st.conv.messages
@@ -183,21 +213,26 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                     else msgs + ChatMessage(modelId, "model", partial, ts)
                     st.copy(conv = st.conv.copy(messages = newMsgs))
                 }
+                if (streamSpeech) feedSpeech(partial, false)
             }
             // primary AI first; if its limit is over or it fails, the other one takes over automatically
             val order = if (store.primaryAi == "groq") listOf("groq", "gemini") else listOf("gemini", "groq")
             var usedProv = ""
+            val errors = mutableListOf<String>()
             var result: Result<String> = Result.failure(Exception("कोई AI key नहीं मिली।"))
             for (prov in order) {
                 if (prov == "groq" && groqKey.isBlank()) continue
                 if (prov == "gemini" && key.isBlank()) continue
+                queue?.cancel(); queue = null; emitted = 0; firstChunk = true; tFirst = 0L
                 result = if (prov == "groq") {
                     groq.generate(groqKey, withUser.messages, voice, gemini.systemPrompt(voice, ctx), nowLine(), onPartial)
                 } else {
                     gemini.generate(key, store.model, withUser.messages, voice, ctx, store.searchEnabled, nowLine(), onPartial)
                 }
                 if (result.isSuccess) { usedProv = prov; break }
+                errors += (if (prov == "groq") "Groq" else "Gemini") + ": " + (result.exceptionOrNull()?.message ?: "?")
             }
+            if (result.isFailure && errors.isNotEmpty()) result = Result.failure(Exception(errors.joinToString("\n")))
             result
                 .onSuccess { reply0 ->
                     var reply = reply0
@@ -215,11 +250,25 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                         messages = c.messages.filterNot { it.id == modelId } +
                             ChatMessage(modelId, "model", reply, t)
                     )
-                    _ui.update { it.copy(conv = done, busy = false, orb = OrbState.Idle) }
+                    _ui.update { it.copy(conv = done, busy = false, orb = if (voice && streamSpeech) it.orb else OrbState.Idle) }
                     persist(done)
-                    if (voice) speak(reply)
+                    val tEnd = System.currentTimeMillis()
+                    timingBase = "⏱ $usedProv · पहला शब्द " + sec((if (tFirst == 0L) tEnd else tFirst) - turnStart) +
+                        "s · जवाब पूरा " + sec(tEnd - turnStart) + "s"
+                    _ui.update { it.copy(timing = timingBase) }
+                    if (voice) {
+                        if (streamSpeech) {
+                            feedSpeech(reply0.substringBefore("\n\nस्रोत:").substringBefore("\n\n⚠"), true)
+                            val q = queue
+                            if (q != null) q.close() else onSpeakDone()
+                        } else {
+                            speak(reply)
+                        }
+                    }
                 }
                 .onFailure { e ->
+                    queue?.cancel()
+                    queue = null
                     _ui.update { st ->
                         st.copy(
                             conv = st.conv.copy(messages = st.conv.messages.filterNot { it.id == modelId }),
@@ -386,7 +435,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         when (_ui.value.orb) {
             OrbState.Listening ->
                 if (store.voiceEngine == "gemini") recorder.finish() else recognizer?.stopListening()
-            OrbState.Speaking -> { tts?.stop(); speakJob?.cancel(); startListening() }   // interrupt the AI
+            OrbState.Speaking -> { tts?.stop(); speakJob?.cancel(); queue?.cancel(); queue = null; startListening() }   // interrupt the AI
             OrbState.Thinking -> stop()
             OrbState.Idle -> startListening()
         }
@@ -396,6 +445,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         job?.cancel()
         recJob?.cancel()
         speakJob?.cancel()
+        queue?.cancel()
+        queue = null
         tts?.stop()
         recognizer?.cancel()
         _ui.update { it.copy(orb = OrbState.Idle, busy = false, partial = "") }
@@ -571,6 +622,87 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     fun speakMessage(text: String) {
         voiceTurn = false
         speak(text)
+    }
+
+    private fun sec(ms: Long): String = "%.1f".format(ms / 1000.0)
+
+    private fun naturalEngines(): List<String> {
+        val pref = store.ttsEngine
+        if (pref == "android") return emptyList()
+        return (listOf(pref) + listOf("sarvam", "gemini")).distinct().filter {
+            (it == "sarvam" && store.sarvamKey.isNotBlank()) || (it == "gemini" && store.geminiKey.isNotBlank())
+        }
+    }
+
+    /** One sentence -> natural voice audio. An engine that just failed is skipped for a minute. */
+    private fun fetchVoice(text: String): AudioPlayer.Audio? {
+        val clean = LangUtil.stripMarkdown(text)
+        if (clean.isBlank()) return null
+        val langTag = LangUtil.detect(clean, store.sttLang).toLanguageTag()
+        for (e in naturalEngines()) {
+            val now = System.currentTimeMillis()
+            if (e == "sarvam" && sarvam.supports(langTag) && now > sarvamDownUntil) {
+                val a = sarvam.fetchOne(store.sarvamKey, clean, store.sarvamVoice, langTag)
+                if (a != null) { lastVoiceEngine = "Sarvam"; return a }
+                sarvamDownUntil = System.currentTimeMillis() + 60_000
+            }
+            if (e == "gemini" && now > geminiTtsDownUntil) {
+                val a = speaker.fetchOne(store.geminiKey, clean, store.ttsVoice)
+                if (a != null) { lastVoiceEngine = "Gemini"; return a }
+                geminiTtsDownUntil = System.currentTimeMillis() + 60_000
+            }
+        }
+        return null
+    }
+
+    private fun startQueue(): SpeechQueue {
+        val q = SpeechQueue(
+            viewModelScope,
+            fetch = { s -> fetchVoice(s) },
+            onStart = {
+                setOrb(OrbState.Speaking)
+                _ui.update {
+                    it.copy(timing = timingBase + " · आवाज़ शुरू " + sec(System.currentTimeMillis() - turnStart) +
+                        "s (" + lastVoiceEngine + ")")
+                }
+            },
+            onFinish = { leftover ->
+                if (leftover.isEmpty()) onSpeakDone()
+                else {
+                    showError("स्वाभाविक आवाज़ नहीं मिली (limit या key?), बाकी हिस्सा फ़ोन की आवाज़ में बोला।")
+                    speakWithAndroid(leftover.joinToString(" "))
+                }
+            }
+        )
+        queue = q
+        return q
+    }
+
+    /** End index (exclusive) of the next sentence chunk that is at least [minLen] long, or -1. */
+    private fun nextChunk(text: String, from: Int, minLen: Int, final: Boolean): Int {
+        var i = maxOf(from, from + minLen - 1)
+        while (i < text.length) {
+            val c = text[i]
+            if (c == '.' || c == '!' || c == '?' || c == '।' || c == '\n') {
+                val ok = if (i == text.lastIndex) final else (c == '\n' || text[i + 1].isWhitespace())
+                if (ok) return i + 1
+            }
+            i++
+        }
+        return -1
+    }
+
+    /** Sends every finished sentence of the growing answer to the voice queue. */
+    private fun feedSpeech(text: String, final: Boolean) {
+        while (emitted < text.length) {
+            val end = nextChunk(text, emitted, if (firstChunk) 20 else 70, final)
+            val e = if (end >= 0) end else if (final) text.length else return
+            val piece = text.substring(emitted, e)
+            emitted = e
+            if (LangUtil.stripMarkdown(piece).isBlank()) continue
+            firstChunk = false
+            (queue ?: startQueue()).add(piece)
+        }
     }
 
     private fun speak(text: String) {

@@ -45,6 +45,14 @@ class SarvamSpeaker {
         played
     }
 
+    fun supports(langTag: String): Boolean = langOf(langTag) != null
+
+    /** One sentence -> audio (blocking). null = unsupported language or failure. */
+    fun fetchOne(apiKeys: String, text: String, speaker: String, langTag: String): AudioPlayer.Audio? {
+        val lang = langOf(langTag) ?: return null
+        return fetch(Keys.list(apiKeys), text, speaker, lang)
+    }
+
     private fun fetch(keys: List<String>, text: String, speaker: String, lang: String): AudioPlayer.Audio? {
         for (k in keys) {
             val order = (variant until 3) + (0 until variant)
@@ -79,8 +87,8 @@ class SarvamSpeaker {
     private fun post(apiKey: String, body: String): Pair<Int, String> {
         val conn = (URL("https://api.sarvam.ai/text-to-speech").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 15_000
-            readTimeout = 40_000
+            connectTimeout = 8_000
+            readTimeout = 15_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("api-subscription-key", apiKey)

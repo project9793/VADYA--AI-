@@ -112,6 +112,10 @@ fun HomeScreen(vm: AssistantViewModel, tools: ToolsViewModel, onOpenChat: () -> 
             Spacer(Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodyMedium)
         }
+        if (ui.timing.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(ui.timing, style = MaterialTheme.typography.labelSmall)
+        }
 
         ui.pending?.let { p ->
             Spacer(Modifier.height(12.dp))

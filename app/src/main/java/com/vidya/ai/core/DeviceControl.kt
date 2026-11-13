@@ -4,9 +4,9 @@ import org.json.JSONObject
 
 object DeviceControl {
     private val hint = Regex(
-        "call|कॉल|फोन|फ़ोन|dial|whatsapp|व्हाट्स|वाट्स|वॉट्स|youtube|यूट्यूब|खोल|open|चलाओ|चला दो|" +
-            "बजाओ|बजा दो|play|गाना|गाने|song|music|म्यूजिक|संगीत|video|वीडियो|सुनाओ|काट|कट|disconnect|" +
-            "hang ?up|मैसेज|message|msg|भेज",
+        "call|कॉल|फोन\\s*(करो|कर दो|लगा|मिला)|फ़ोन\\s*(करो|कर दो|लगा|मिला)|dial|whatsapp|व्हाट्स|वाट्स|वॉट्स|" +
+            "youtube|यूट्यूब|खोलो|खोल दो|ओपन|\\bopen\\b|चलाओ|चला दो|बजाओ|बजा दो|\\bplay\\b|सुनाओ|" +
+            "(काट|कट)\\s*(दो|करो)|hang ?up|disconnect|मैसेज\\s*(भेज|कर)|message\\s*(to|भेज)|\\bmsg\\b",
         RegexOption.IGNORE_CASE
     )
 
@@ -24,6 +24,7 @@ object DeviceControl {
             "none = anything else such as questions, chat or information requests. Unused fields are empty strings. " +
             "User request: " + JSONObject.quote(text)
 
-    /** Cheap check so normal chat does not pay for an extra request. */
-    fun looksLikeCommand(msg: String): Boolean = msg.length <= 160 && hint.containsMatchIn(msg)
+    /** Commands are short orders, not questions. Normal chat skips the extra request completely. */
+    fun looksLikeCommand(msg: String): Boolean =
+        msg.length <= 120 && !msg.contains('?') && !msg.contains('？') && hint.containsMatchIn(msg)
 }

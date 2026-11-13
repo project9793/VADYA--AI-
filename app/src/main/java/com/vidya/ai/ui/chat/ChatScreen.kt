@@ -95,6 +95,10 @@ fun ChatScreen(vm: AssistantViewModel) {
             Text(it, Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
         }
+        if (ui.timing.isNotBlank()) {
+            Text(ui.timing, Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall)
+        }
 
         Row(
             Modifier.fillMaxWidth().padding(12.dp),

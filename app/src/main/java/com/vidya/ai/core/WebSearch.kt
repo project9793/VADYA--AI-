@@ -40,8 +40,8 @@ object WebSearch {
             val loc = if (hindi) "hl=hi&gl=IN&ceid=IN:hi" else "hl=en-IN&gl=IN&ceid=IN:en"
             val url = URL("https://news.google.com/rss/search?q=${URLEncoder.encode(cleaned, "UTF-8")}&$loc")
             val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 4_000
-                readTimeout = 4_000
+                connectTimeout = 2_500
+                readTimeout = 2_500
                 setRequestProperty("User-Agent", "Mozilla/5.0")
             }
             if (conn.responseCode != 200) {

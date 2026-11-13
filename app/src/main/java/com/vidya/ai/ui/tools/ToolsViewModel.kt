@@ -12,6 +12,10 @@ import com.vidya.ai.core.GeminiSpeaker
 import com.vidya.ai.core.GroqClient
 import com.vidya.ai.core.SarvamSpeaker
 import com.vidya.ai.core.SecureStore
+import com.vidya.ai.core.WebSearch
+import com.vidya.ai.data.ChatMessage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.vidya.ai.data.MemoryItem
 import com.vidya.ai.data.MemoryRepository
 import kotlinx.coroutines.launch
@@ -55,7 +59,7 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     fun updateTtsVoice(v: String) { store.ttsVoice = v; ttsVoice = v }
     fun updateSarvamVoice(v: String) { store.sarvamVoice = v; sarvamVoice = v }
     fun updatePrimaryAi(v: String) { store.primaryAi = v; primaryAi = v }
-    fun updateLang(v: String) { store.sttLang = v; sttLang = v }
+    fun setLang(v: String) { store.sttLang = v; sttLang = v }
     fun updateVoiceEngine(v: String) { store.voiceEngine = v; voiceEngine = v }
     fun updateSearchEnabled(v: Boolean) { store.searchEnabled = v; searchEnabled = v }
     fun updateMemoryEnabled(v: Boolean) { store.memoryEnabled = v; memoryEnabled = v }
@@ -80,14 +84,52 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     fun runTest() {
         val g = store.geminiKey
         val q = store.groqKey
-        if (g.isBlank() && q.isBlank()) { testResult = "पहले कोई key डालकर Save करें।"; return }
+        val sv = store.sarvamKey
+        if (g.isBlank() && q.isBlank() && sv.isBlank()) { testResult = "पहले कोई key डालकर Save करें।"; return }
         testing = true
         testResult = ""
         viewModelScope.launch {
             val sb = StringBuilder()
-            if (q.isNotBlank()) sb.append("Groq: ").append(groq.diagnose(q)).append("\n\n")
-            if (g.isNotBlank()) sb.append("Gemini:\n").append(gemini.diagnose(g))
-            testResult = sb.toString().trim()
+            suspend fun step(label: String, block: suspend () -> String) {
+                val t0 = System.currentTimeMillis()
+                val r = try { block() } catch (e: Exception) { "✖ ${e.message}" }
+                val dt = "%.1f".format((System.currentTimeMillis() - t0) / 1000.0)
+                sb.append(label).append(": ").append(r).append(" (").append(dt).append("s)\n")
+                testResult = sb.toString().trim()
+            }
+            val hello = listOf(ChatMessage(1, "user", "नमस्ते बोलो", 0))
+            val sample = "नमस्ते, मैं ${store.assistantName} हूँ।"
+
+            if (q.isNotBlank()) {
+                step("Groq key") { groq.diagnose(q).replace('\n', ' ') }
+                step("Groq जवाब") {
+                    groq.generate(q, hello, true, "Reply in one short Hindi sentence.", "", null)
+                        .fold({ "✔ " + it.take(40) }, { "✖ " + (it.message ?: "").replace('\n', ' ') })
+                }
+            }
+            if (g.isNotBlank()) {
+                step("Gemini key") { gemini.diagnose(g).replace('\n', ' ') }
+                step("Gemini जवाब") {
+                    gemini.generate(g, store.model, hello, true, "", false, "", null)
+                        .fold({ "✔ " + it.take(40) }, { "✖ " + (it.message ?: "").replace('\n', ' ') })
+                }
+            }
+            step("Google News खोज") {
+                val n = WebSearch.news("ताज़ा खबर").size
+                if (n > 0) "✔ $n नतीजे" else "✖ कोई नतीजा नहीं"
+            }
+            if (sv.isNotBlank()) {
+                step("Sarvam आवाज़") {
+                    val a = withContext(Dispatchers.IO) { sarvam.fetchOne(sv, sample, store.sarvamVoice, "hi-IN") }
+                    if (a != null) "✔ आवाज़ बनी" else "✖ नहीं बनी (key / credits / voice नाम?)"
+                }
+            }
+            if (g.isNotBlank()) {
+                step("Gemini आवाज़") {
+                    val a = withContext(Dispatchers.IO) { speaker.fetchOne(g, sample, store.ttsVoice) }
+                    if (a != null) "✔ आवाज़ बनी" else "✖ नहीं बनी (limit / model?)"
+                }
+            }
             testing = false
         }
     }
