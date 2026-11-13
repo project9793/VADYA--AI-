@@ -182,8 +182,9 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             // 2) phone-control commands (call, WhatsApp, YouTube, music, open app ...)
             // the web search starts now and runs while the command check happens (max 2 s)
-            val hitsDeferred = if (store.searchEnabled && WebSearch.needsFresh(msg))
-                async { withTimeoutOrNull(2_000) { WebSearch.news(msg) } ?: emptyList() }
+            var searchHits: List<WebSearch.Hit> = emptyList()
+            val searchJob: Job? = if (store.searchEnabled && WebSearch.needsFresh(msg))
+                launch { searchHits = withTimeoutOrNull(2_000) { WebSearch.news(msg) } ?: emptyList() }
             else null
             if (DeviceControl.looksLikeCommand(msg)) {
                 val cmd = withTimeoutOrNull(3_500) {
@@ -192,11 +193,12 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                     c
                 }
                 if (cmd != null && handleCommand(cmd, voice)) {
-                    hitsDeferred?.cancel()
+                    searchJob?.cancel()
                     return@launch
                 }
             }
-            val hits: List<WebSearch.Hit> = hitsDeferred?.await() ?: emptyList()
+            searchJob?.join()
+            val hits: List<WebSearch.Hit> = searchHits
 
             val modelId = ids.incrementAndGet()
             val ctx = buildContext() + WebSearch.asContext(hits)
