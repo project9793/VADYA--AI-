@@ -89,7 +89,7 @@ fun ChatScreen(vm: AssistantViewModel) {
         }
         ui.pending?.let { p ->
             Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
-                ActionCard(p, vm::confirmPending, vm::cancelPending)
+                ActionCard(p, vm::confirmPending, vm::cancelPending, vm::pickOption)
             }
         }
         ui.guide?.let { g ->

@@ -7,13 +7,16 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.telecom.TelecomManager
+import android.view.KeyEvent
 import androidx.core.content.ContextCompat
+import com.vidya.ai.service.VidyaAccessibilityService
 
 /** Phone actions done only through Android's official, permission-based routes. */
 class DeviceActions(private val ctx: Context) {
@@ -93,6 +96,20 @@ class DeviceActions(private val ctx: Context) {
         }
     }
 
+    @SuppressLint("MissingPermission")
+    fun answerCall(): String {
+        if (!has(Manifest.permission.ANSWER_PHONE_CALLS)) {
+            return "Call उठाने के लिए Tools → Permissions में Phone calls allow करें।"
+        }
+        return try {
+            val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+            tm.acceptRingingCall()
+            "✔ Call उठा ली।"
+        } catch (e: Exception) {
+            "Call नहीं उठा सकी: ${e.message}"
+        }
+    }
+
     // ---------------------------------------------------------------- WhatsApp
 
     private fun waNumber(raw: String): String {
@@ -104,22 +121,28 @@ class DeviceActions(private val ctx: Context) {
         }
     }
 
-    /** Opens the chat with the text already typed. The user presses Send inside WhatsApp. */
-    fun whatsapp(number: String?, message: String): String {
+    /**
+     * Opens the chat with the text already typed. With [autoSend] (Accessibility service on) the
+     * Send button is pressed for the user; otherwise the user presses Send.
+     */
+    fun whatsapp(number: String?, message: String, autoSend: Boolean = false): String {
         val text = Uri.encode(message)
         val url = if (!number.isNullOrBlank()) "https://wa.me/${waNumber(number)}?text=$text"
         else "https://wa.me/?text=$text"
         val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        val ok = if (autoSend) "💬 WhatsApp खुल गया, संदेश भेज रही हूँ।" else "💬 WhatsApp खुल गया। संदेश तैयार है, Send आप दबाइए।"
+        if (autoSend) VidyaAccessibilityService.requestSend()
         return try {
             i.setPackage("com.whatsapp")
             start(i)
-            "💬 WhatsApp खुल गया। संदेश तैयार है, Send आप दबाइए।"
+            ok
         } catch (e: ActivityNotFoundException) {
             try {
                 i.setPackage(null)
                 start(i)
-                "💬 संदेश तैयार है, Send आप दबाइए।"
+                ok
             } catch (e2: Exception) {
+                VidyaAccessibilityService.cancelSend()
                 "WhatsApp नहीं खुल सका: ${e2.message}"
             }
         }
@@ -150,31 +173,101 @@ class DeviceActions(private val ctx: Context) {
         val i = Intent(Intent.ACTION_SEARCH).setPackage("com.google.android.youtube").putExtra("query", query)
         return try {
             start(i)
-            "▶ YouTube में \"$query\" के नतीजे खुल गए। वीडियो आप tap कीजिए।"
+            "▶ YouTube में \"$query\" के नतीजे खुल गए।"
         } catch (e: Exception) {
             try {
                 start(Intent(Intent.ACTION_VIEW,
                     Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(query)}")))
-                "▶ \"$query\" के नतीजे खुल गए। वीडियो आप tap कीजिए।"
+                "▶ \"$query\" के नतीजे खुल गए।"
             } catch (e2: Exception) {
                 "YouTube नहीं खुल सका: ${e2.message}"
             }
         }
     }
 
-    fun playMusic(query: String): String {
-        fun intent(pkg: String?) = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-            .putExtra(SearchManager.QUERY, query)
-            .apply { if (pkg != null) setPackage(pkg) }
-        for (pkg in listOf("com.google.android.apps.youtube.music", "com.spotify.music", null)) {
+    /** Finds the top YouTube video (Data API) and opens it so it starts playing. Blocking: call off the main thread. */
+    fun youtubePlay(query: String, apiKeys: String): String {
+        if (apiKeys.isBlank()) {
+            return youtubeSearch(query) + "\\nवीडियो अपने आप चलाने के लिए Tools → 8. Phone control में YouTube API key डालिए।"
+        }
+        val hit = YouTubeApi.firstVideo(apiKeys, query)
+            ?: return youtubeSearch(query) + "\\nYouTube key / limit में दिक्कत है, इसलिए खोज के नतीजे खोले।"
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=${hit.first}"))
+        return try {
+            i.setPackage("com.google.android.youtube")
+            start(i)
+            "▶ चला रही हूँ: ${hit.second}"
+        } catch (e: Exception) {
             try {
-                start(intent(pkg))
-                return "🎵 \"$query\" चला रही हूँ।"
-            } catch (e: Exception) {
-                // try the next music app
+                i.setPackage(null)
+                start(i)
+                "▶ चला रही हूँ: ${hit.second}"
+            } catch (e2: Exception) {
+                "वीडियो नहीं खुल सका: ${e2.message}"
             }
         }
-        return youtubeSearch(query)
+    }
+
+    private fun playFromSearch(query: String, pkg: String?): Boolean {
+        val i = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            .putExtra(SearchManager.QUERY, query)
+        if (pkg != null) i.setPackage(pkg)
+        return try { start(i); true } catch (e: Exception) { false }
+    }
+
+    /** [app]: spotify | youtube_music | music_player | youtube | "" (then [defaultApp] is used). */
+    fun playMusic(query: String, app: String, defaultApp: String, youtubeKey: String): String {
+        val wanted = app.lowercase().ifBlank { defaultApp.lowercase() }
+        if (wanted == "youtube") return youtubePlay(query, youtubeKey)
+        val order = when (wanted) {
+            "spotify" -> listOf("spotify")
+            "youtube_music" -> listOf("youtube_music")
+            "music_player", "player" -> listOf("player")
+            else -> listOf("youtube_music", "spotify", "player")
+        }
+        for (target in order) {
+            when (target) {
+                "spotify" -> {
+                    if (playFromSearch(query, "com.spotify.music")) return "🎵 Spotify में \"$query\" चला रही हूँ।"
+                    try {
+                        start(Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:" + Uri.encode(query))))
+                        return "🎵 Spotify में \"$query\" की खोज खुल गई। गाना आप tap कीजिए।"
+                    } catch (e: Exception) { /* not installed */ }
+                }
+                "youtube_music" -> {
+                    if (playFromSearch(query, "com.google.android.apps.youtube.music")) {
+                        return "🎵 YouTube Music में \"$query\" चला रही हूँ।"
+                    }
+                }
+                else -> {
+                    if (playFromSearch(query, null)) return "🎵 Music player में \"$query\" चला रही हूँ।"
+                    try {
+                        start(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC))
+                        return "🎵 Music player खुल गया। \"$query\" आप चुनिए।"
+                    } catch (e: Exception) { /* none */ }
+                }
+            }
+        }
+        return youtubePlay(query, youtubeKey)
+    }
+
+    /** pause | resume | next | previous: works with any music / video app that is playing. */
+    fun mediaControl(cmd: String): String {
+        val (code, label) = when (cmd.lowercase().trim()) {
+            "pause", "stop" -> KeyEvent.KEYCODE_MEDIA_PAUSE to "रोक दिया"
+            "resume", "play" -> KeyEvent.KEYCODE_MEDIA_PLAY to "फिर चालू कर दिया"
+            "next" -> KeyEvent.KEYCODE_MEDIA_NEXT to "अगला चला दिया"
+            "previous", "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS to "पिछला चला दिया"
+            else -> return "यह आदेश समझ नहीं आया: $cmd"
+        }
+        return try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+            am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+            "✔ $label।"
+        } catch (e: Exception) {
+            "Media control नहीं चला: ${e.message}"
+        }
     }
 }

@@ -120,7 +120,7 @@ fun HomeScreen(vm: AssistantViewModel, tools: ToolsViewModel, onOpenChat: () -> 
 
         ui.pending?.let { p ->
             Spacer(Modifier.height(12.dp))
-            ActionCard(p, vm::confirmPending, vm::cancelPending)
+            ActionCard(p, vm::confirmPending, vm::cancelPending, vm::pickOption)
         }
         ui.guide?.let { g ->
             Spacer(Modifier.height(12.dp))

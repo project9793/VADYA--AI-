@@ -15,6 +15,8 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vidya.ai.core.AppGuide
+import com.vidya.ai.core.AppPerm
+import com.vidya.ai.core.Permissions
 import com.vidya.ai.core.AudioPlayer
 import com.vidya.ai.core.DeviceActions
 import com.vidya.ai.core.DeviceControl
@@ -75,7 +77,10 @@ data class AssistantUiState(
 )
 
 /** A call / WhatsApp message waiting for the user's confirmation. */
-data class PendingAction(val kind: String, val name: String, val number: String, val message: String)
+data class PendingAction(
+    val kind: String, val name: String, val number: String, val message: String,
+    val options: List<String> = emptyList()
+)
 
 /** A "go there" suggestion from the guide (route = screen to open), or a tour step card. */
 data class GuideAction(val title: String, val text: String, val route: String?, val tour: Boolean = false)
@@ -129,6 +134,9 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private var geminiTtsDownUntil = 0L
 
     // in-app guide
+    private var permWait: CompletableDeferred<Unit>? = null
+    private val _permEvents = Channel<Array<String>>(Channel.BUFFERED)
+    val permEvents = _permEvents.receiveAsFlow()
     private var tourJob: Job? = null
     private var narrateJob: Job? = null
     private var androidDone: CompletableDeferred<Unit>? = null
@@ -337,44 +345,92 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         if (voice || forceSpeak) speak(spoken ?: reply)
     }
 
+    /** Asks for the permission right now (system dialog) if it is missing; waits for the answer. */
+    private suspend fun ensurePermission(p: AppPerm): Boolean {
+        if (Permissions.isGranted(app, p)) return true
+        val req = Permissions.runtimePerms(p)
+        if (req.isEmpty()) return false
+        val d = CompletableDeferred<Unit>()
+        permWait = d
+        _permEvents.trySend(req)
+        withTimeoutOrNull(60_000) { d.await() }
+        permWait = null
+        return Permissions.isGranted(app, p)
+    }
+
+    fun onPermissionResult() { permWait?.complete(Unit) }
+
     private suspend fun handleCommand(cmd: JSONObject, voice: Boolean): Boolean {
         val action = cmd.optString("action")
         val name = cmd.optString("name")
         val nameEn = cmd.optString("name_en")
         val number = cmd.optString("number").filter { it.isDigit() || it == '+' }
+        val query = cmd.optString("query").ifBlank { name }
         when (action) {
             "call", "whatsapp" -> {
                 val isCall = action == "call"
                 var display = name.ifBlank { nameEn }
                 var num = if (number.filter { it.isDigit() }.length >= 7) number else ""
+                var options: List<String> = emptyList()
                 if (num.isEmpty() && display.isNotBlank()) {
+                    ensurePermission(AppPerm.Contacts)
                     val list = withContext(Dispatchers.IO) { actions.findContact(listOf(name, nameEn)) }
-                    val hit = list.firstOrNull { it.name.equals(name, true) || it.name.equals(nameEn, true) }
+                    val best = list.firstOrNull { it.name.equals(name, true) || it.name.equals(nameEn, true) }
                         ?: list.firstOrNull()
-                    if (hit != null) { display = hit.name; num = hit.number }
+                    if (best != null) { display = best.name; num = best.number }
+                    if (list.size > 1) options = list.take(4).map { it.name + "|" + it.number }
                 }
                 if (isCall && num.isEmpty()) {
                     finishWith(
-                        "\"$display\" का नंबर नहीं मिला। Tools → Permissions में Contacts allow करें, या नंबर बोलिए।",
-                        voice, null
+                        "\"$display\" का नंबर नहीं मिला। Contacts की अनुमति चालू करें, या नंबर बोलिए।",
+                        voice, null,
+                        guide = GuideAction("Permissions", "", "tools/permissions")
                     )
                     return true
                 }
-                val p = PendingAction(if (isCall) "call" else "whatsapp", display, num, cmd.optString("message"))
+                val p = PendingAction(if (isCall) "call" else "whatsapp", display, num, cmd.optString("message"), options)
                 val ask = if (isCall) "$display को call लगाऊँ? नीचे देखकर पुष्टि करें।"
                 else "$display के लिए WhatsApp संदेश तैयार है। नीचे देखकर पुष्टि करें।"
                 finishWith(ask, voice, p)
                 return true
             }
-            "end_call" -> { finishWith(actions.endCall(), voice, null); return true }
+            "end_call" -> {
+                ensurePermission(AppPerm.Calls)
+                finishWith(actions.endCall(), voice, null)
+                return true
+            }
+            "answer_call" -> {
+                ensurePermission(AppPerm.Calls)
+                finishWith(actions.answerCall(), voice, null)
+                return true
+            }
             "open_app" -> { finishWith(actions.openApp(cmd.optString("app")), voice, null); return true }
             "youtube_search" -> {
-                val q = cmd.optString("query").ifBlank { name }
-                if (q.isNotBlank()) { finishWith(actions.youtubeSearch(q), voice, null); return true }
+                if (query.isNotBlank()) { finishWith(actions.youtubeSearch(query), voice, null); return true }
+            }
+            "youtube_play" -> {
+                if (query.isNotBlank()) {
+                    val key = store.youtubeKey
+                    val r = withContext(Dispatchers.IO) { actions.youtubePlay(query, key) }
+                    finishWith(
+                        r, voice, null,
+                        guide = if (key.isBlank()) GuideAction("YouTube key डालिए", "वीडियो सीधे चलाने के लिए", "tools/phone") else null
+                    )
+                    return true
+                }
             }
             "play_music" -> {
-                val q = cmd.optString("query").ifBlank { name }
-                if (q.isNotBlank()) { finishWith(actions.playMusic(q), voice, null); return true }
+                if (query.isNotBlank()) {
+                    val r = withContext(Dispatchers.IO) {
+                        actions.playMusic(query, cmd.optString("app"), store.musicApp, store.youtubeKey)
+                    }
+                    finishWith(r, voice, null)
+                    return true
+                }
+            }
+            "media_control" -> {
+                finishWith(actions.mediaControl(cmd.optString("query")), voice, null)
+                return true
             }
         }
         return false
@@ -383,15 +439,34 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     fun confirmPending(editedMessage: String) {
         val p = _ui.value.pending ?: return
         _ui.update { it.copy(pending = null) }
-        val result = when (p.kind) {
-            "call" -> actions.call(p.number)
-            "whatsapp" -> {
-                val r = actions.whatsapp(p.number.ifBlank { null }, editedMessage)
-                "$r\nकिसे: ${p.name.ifBlank { "(आप चुनेंगे)" }}\nसंदेश: $editedMessage"
+        viewModelScope.launch {
+            var guide: GuideAction? = null
+            val result = when (p.kind) {
+                "call" -> {
+                    ensurePermission(AppPerm.Calls)
+                    actions.call(p.number)
+                }
+                "whatsapp" -> {
+                    val auto = store.waAutoSend && Permissions.isGranted(app, AppPerm.Accessibility)
+                    val r = actions.whatsapp(p.number.ifBlank { null }, editedMessage, auto)
+                    var extra = ""
+                    if (store.waAutoSend && !auto) {
+                        extra = "\nअपने आप Send के लिए Tools → Permissions → Accessibility चालू कीजिए।"
+                        guide = GuideAction("Accessibility चालू कीजिए", "", "tools/permissions")
+                    }
+                    r + "\nकिसे: " + p.name.ifBlank { "(आप चुनेंगे)" } + "\nसंदेश: " + editedMessage + extra
+                }
+                else -> ""
             }
-            else -> ""
+            if (result.isNotBlank()) finishWith(result, false, null, guide = guide)
         }
-        if (result.isNotBlank()) finishWith(result, false, null)
+    }
+
+    fun pickOption(i: Int) {
+        val p = _ui.value.pending ?: return
+        val o = p.options.getOrNull(i) ?: return
+        val parts = o.split("|", limit = 2)
+        if (parts.size == 2) _ui.update { it.copy(pending = p.copy(name = parts[0], number = parts[1])) }
     }
 
     fun cancelPending() {

@@ -36,6 +36,9 @@ private val PERMS = listOf(
         "call लगाने और call काटने के लिए।"),
     PermInfo(AppPerm.Notifications, "Notification 🔔", Icons.Default.Notifications,
         "reminder और सूचनाएँ दिखाने के लिए।"),
+    PermInfo(AppPerm.Accessibility, "Accessibility ♿ (WhatsApp में अपने आप Send)", Icons.Default.Accessibility,
+        "आपकी पुष्टि के बाद WhatsApp में भेजें बटन अपने आप दबाने के लिए। सिर्फ़ WhatsApp पर चलता है, संदेश पढ़ता नहीं। " +
+            "खुलने वाली सूची में VIDYA AI चुनकर ON कीजिए।"),
     PermInfo(AppPerm.Screen, "Screen 🖥️", Icons.Default.ScreenShare,
         "दूसरे apps के ऊपर दिखने की अनुमति। (दूसरे app की स्क्रीन पढ़ने या उसमें खुद टाइप करने के लिए Accessibility अलग से चाहिए, वह अभी नहीं जोड़ा।)")
 )

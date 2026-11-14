@@ -22,8 +22,13 @@ import com.vidya.ai.ui.assistant.PendingAction
 
 /** Confirmation before a call / WhatsApp message: shows exactly who and what. */
 @Composable
-fun ActionCard(p: PendingAction, onConfirm: (String) -> Unit, onCancel: () -> Unit) {
-    var msg by remember(p) { mutableStateOf(p.message) }
+fun ActionCard(
+    p: PendingAction,
+    onConfirm: (String) -> Unit,
+    onCancel: () -> Unit,
+    onPick: (Int) -> Unit = {}
+) {
+    var msg by remember(p.kind, p.message) { mutableStateOf(p.message) }
     val isCall = p.kind == "call"
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -39,13 +44,21 @@ fun ActionCard(p: PendingAction, onConfirm: (String) -> Unit, onCancel: () -> Un
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("क्या लिखा जाएगा") }
                 )
-                Text("WhatsApp खुलने के बाद Send आप दबाएँगे।", style = MaterialTheme.typography.bodySmall)
+            }
+            if (p.options.size > 1) {
+                Text("और भी मिले, दबाकर चुनिए:", style = MaterialTheme.typography.bodySmall)
+                p.options.forEachIndexed { i, o ->
+                    val parts = o.split("|", limit = 2)
+                    OutlinedButton(onClick = { onPick(i) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(parts[0] + "   " + parts.getOrElse(1) { "" })
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { onConfirm(msg) },
                     enabled = isCall || msg.isNotBlank()
-                ) { Text(if (isCall) "Call करो" else "WhatsApp खोलें") }
+                ) { Text(if (isCall) "Call करो" else "WhatsApp खोलें और भेजें") }
                 OutlinedButton(onClick = onCancel) { Text("रद्द करें") }
             }
         }

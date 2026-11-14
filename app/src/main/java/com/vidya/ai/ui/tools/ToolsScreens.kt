@@ -35,6 +35,7 @@ object ToolRoutes {
     const val Keys = "tools/keys"
     const val Permissions = "tools/permissions"
     const val Guide = "tools/guide"
+    const val PhoneControl = "tools/phone"
 }
 
 private val TTS_VOICES = listOf("Kore", "Aoede", "Leda", "Zephyr", "Puck", "Charon", "Fenrir")
@@ -86,6 +87,8 @@ fun ToolsHomeScreen(tools: ToolsViewModel, onOpen: (String) -> Unit) {
             "$grantedCount / ${AppPerm.entries.size} चालू") {
             onOpen(ToolRoutes.Permissions)
         }
+        ToolCard(Icons.Default.Call, "8. Phone control",
+            "Call · WhatsApp · YouTube · Music") { onOpen(ToolRoutes.PhoneControl) }
     }
 }
 
@@ -497,6 +500,79 @@ fun GuideScreen(vm: AssistantViewModel, tools: ToolsViewModel, onBack: () -> Uni
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------- phone control
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun PhoneControlScreen(tools: ToolsViewModel, onBack: () -> Unit, onPermissions: () -> Unit) {
+    val ctx = LocalContext.current
+    var tick by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
+    @Suppress("UNUSED_VARIABLE") val refresh = tick
+    val contacts = Permissions.isGranted(ctx, AppPerm.Contacts)
+    val calls = Permissions.isGranted(ctx, AppPerm.Calls)
+    val access = Permissions.isGranted(ctx, AppPerm.Accessibility)
+
+    ToolPage("📞 Phone control", onBack) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("अनुमतियाँ", style = MaterialTheme.typography.titleMedium)
+                Text(if (contacts) "✔ Contacts चालू (नाम से call / WhatsApp)" else "✖ Contacts बंद")
+                Text(if (calls) "✔ Phone calls चालू (call लगाना, काटना, उठाना)" else "✖ Phone calls बंद")
+                Text(if (access) "✔ Accessibility चालू (WhatsApp में अपने आप Send)" else "✖ Accessibility बंद (Send आपको दबाना होगा)")
+                Button(onClick = onPermissions) { Text("Permissions खोलें") }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Music किस app में चले?", style = MaterialTheme.typography.titleMedium)
+                Text("\"Spotify पर ... चलाओ\" जैसा नाम बोलने पर वही app चलेगा। नाम न बोलें तो यह चुना हुआ।",
+                    style = MaterialTheme.typography.bodySmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Auto" to "auto", "Spotify" to "spotify", "YouTube Music" to "youtube_music",
+                        "Music player" to "player").forEach { (label, key) ->
+                        FilterChip(
+                            selected = tools.musicApp == key,
+                            onClick = { tools.updateMusicApp(key) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("WhatsApp में अपने आप Send", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "आपके कार्ड में \"भेजें\" दबाने के बाद ही, और सिर्फ़ WhatsApp में। मैं आपके संदेश पढ़ती नहीं।",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Switch(checked = tools.waAutoSend, onCheckedChange = tools::updateWaAutoSend)
+            }
+        }
+        KeyCard(
+            title = "YouTube API key (वीडियो सीधे चलाने के लिए)",
+            hint = "console.cloud.google.com → नया project → APIs & Services → Library → \"YouTube Data API v3\" → Enable → " +
+                "Credentials → Create API key। free में रोज़ लगभग 100 खोज। बिना key के YouTube में सिर्फ़ खोज के नतीजे खुलते हैं।",
+            initial = tools.savedYoutube, secret = true, onSave = tools::saveYoutube
+        )
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("ऐसे बोलकर देखिए", style = MaterialTheme.typography.titleMedium)
+                listOf(
+                    "\"राहुल को call करो\"", "\"call काट दो\"  /  \"call उठाओ\"",
+                    "\"राहुल को WhatsApp करो कि मैं देर से आऊँगा\"",
+                    "\"YouTube पर अरिजीत सिंह के गाने चलाओ\"", "\"Spotify पर कैसरिया चलाओ\"",
+                    "\"म्यूज़िक प्लेयर में गाना चलाओ\"", "\"गाना रोको\"  /  \"अगला गाना\""
+                ).forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
             }
         }
     }

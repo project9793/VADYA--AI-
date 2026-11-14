@@ -1,6 +1,7 @@
 package com.vidya.ai.core
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -9,8 +10,9 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.vidya.ai.service.VidyaAccessibilityService
 
-enum class AppPerm { Mic, Camera, Media, Location, Contacts, Calls, Notifications, Screen }
+enum class AppPerm { Mic, Camera, Media, Location, Contacts, Calls, Notifications, Screen, Accessibility }
 
 object Permissions {
 
@@ -42,14 +44,24 @@ object Permissions {
         AppPerm.Notifications ->
             if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS)
             else emptyArray()
-        AppPerm.Screen -> emptyArray()
+        AppPerm.Screen, AppPerm.Accessibility -> emptyArray()
     }
 
     fun isGranted(ctx: Context, p: AppPerm): Boolean = when (p) {
         AppPerm.Notifications -> NotificationManagerCompat.from(ctx).areNotificationsEnabled()
         AppPerm.Screen -> Settings.canDrawOverlays(ctx)
+        AppPerm.Accessibility -> isAccessibilityOn(ctx)
         AppPerm.Calls -> runtimePerms(p).all { has(ctx, it) }
         else -> runtimePerms(p).any { has(ctx, it) }
+    }
+
+    fun isAccessibilityOn(ctx: Context): Boolean {
+        val enabled = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+        val me = ComponentName(ctx, VidyaAccessibilityService::class.java)
+        return enabled.split(':').any {
+            it.equals(me.flattenToString(), true) || it.equals(me.flattenToShortString(), true)
+        }
     }
 
     fun openAppSettings(ctx: Context) {
@@ -74,6 +86,7 @@ object Permissions {
     fun openSettingsFor(ctx: Context, p: AppPerm) = when (p) {
         AppPerm.Notifications -> openNotificationSettings(ctx)
         AppPerm.Screen -> openOverlaySettings(ctx)
+        AppPerm.Accessibility -> ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         else -> openAppSettings(ctx)
     }
 }

@@ -40,6 +40,9 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     var searchEnabled by mutableStateOf(store.searchEnabled); private set
     var memoryEnabled by mutableStateOf(store.memoryEnabled); private set
     var guideSpeak by mutableStateOf(store.guideSpeak); private set
+    var musicApp by mutableStateOf(store.musicApp); private set
+    var waAutoSend by mutableStateOf(store.waAutoSend); private set
+    val savedYoutube: String get() = store.youtubeKey
     var hasGeminiKey by mutableStateOf(store.geminiKey.isNotBlank()); private set
     var hasGroqKey by mutableStateOf(store.groqKey.isNotBlank()); private set
     var hasSarvamKey by mutableStateOf(store.sarvamKey.isNotBlank()); private set
@@ -65,6 +68,9 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     fun updateSearchEnabled(v: Boolean) { store.searchEnabled = v; searchEnabled = v }
     fun updateMemoryEnabled(v: Boolean) { store.memoryEnabled = v; memoryEnabled = v }
     fun updateGuideSpeak(v: Boolean) { store.guideSpeak = v; guideSpeak = v }
+    fun updateMusicApp(v: String) { store.musicApp = v; musicApp = v }
+    fun updateWaAutoSend(v: Boolean) { store.waAutoSend = v; waAutoSend = v }
+    fun saveYoutube(key: String) { store.youtubeKey = key.trim() }
     fun resetGuides() { store.resetSeen() }
 
     fun saveGemini(key: String) { store.geminiKey = key.trim(); hasGeminiKey = store.geminiKey.isNotBlank() }

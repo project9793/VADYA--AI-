@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vidya.ai.ui.tools.GuideScreen
+import com.vidya.ai.ui.tools.PhoneControlScreen
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -23,7 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,6 +108,12 @@ fun VidyaNavHost() {
     LaunchedEffect(Unit) { vm.navEvents.collect { navigateTo(it) } }
     LaunchedEffect(current) { current?.let { vm.onScreen(it) } }
 
+    // permissions asked right when a command needs them (call, contacts ...)
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { vm.onPermissionResult() }
+    LaunchedEffect(Unit) { vm.permEvents.collect { permLauncher.launch(it) } }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onBackground,
@@ -148,6 +154,9 @@ fun VidyaNavHost() {
             composable(ToolRoutes.Keys) { ApiKeyScreen(tools, back) }
             composable(ToolRoutes.Permissions) { PermissionsScreen(back) }
             composable(ToolRoutes.Guide) { GuideScreen(vm, tools, back) }
+            composable(ToolRoutes.PhoneControl) {
+                PhoneControlScreen(tools, back, onPermissions = { open(ToolRoutes.Permissions) })
+            }
             composable(Tab.Settings.route) { SettingsScreen(tools, onGoTools = { go(Tab.Tools.route) }) }
         }
         if (ui.tourOn) {

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">VIDYA AI</string>
+    <string name="accessibility_description">आपकी पुष्टि के बाद WhatsApp में भेजें (Send) बटन अपने आप दबाने के लिए। यह सिर्फ़ WhatsApp पर चलता है, संदेश पढ़ता या सहेजता नहीं।</string>
 </resources>

@@ -86,6 +86,19 @@ class SecureStore(context: Context) {
         get() = voiceEngine == "window"
         set(v) { voiceEngine = if (v) "window" else "google" }
 
+    var youtubeKey: String
+        get() = prefs.getString("youtube_key", "") ?: ""
+        set(v) = prefs.edit().putString("youtube_key", v).apply()
+
+    /** "auto" | "spotify" | "youtube_music" | "player" */
+    var musicApp: String
+        get() = prefs.getString("music_app", "auto") ?: "auto"
+        set(v) = prefs.edit().putString("music_app", v).apply()
+
+    var waAutoSend: Boolean
+        get() = prefs.getBoolean("wa_auto_send", true)
+        set(v) = prefs.edit().putBoolean("wa_auto_send", v).apply()
+
     var guideSpeak: Boolean
         get() = prefs.getBoolean("guide_speak", true)
         set(v) = prefs.edit().putBoolean("guide_speak", v).apply()
