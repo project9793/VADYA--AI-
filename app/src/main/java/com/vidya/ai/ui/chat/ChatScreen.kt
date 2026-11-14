@@ -20,6 +20,7 @@ import com.vidya.ai.data.ChatMessage
 import com.vidya.ai.ui.assistant.AssistantViewModel
 import com.vidya.ai.ui.common.rememberMicAction
 import com.vidya.ai.ui.components.ActionCard
+import com.vidya.ai.ui.components.GuideCard
 import com.vidya.ai.ui.components.OrbState
 import com.vidya.ai.ui.theme.VidyaViolet
 
@@ -30,7 +31,7 @@ fun ChatScreen(vm: AssistantViewModel) {
     val listState = rememberLazyListState()
     var text by remember { mutableStateOf("") }
     val onMic = rememberMicAction(
-        onDenied = { vm.showError("Mic permission चाहिए। Settings tab में जाकर दें।") }
+        onDenied = { vm.guideTo("permissions", "माइक की अनुमति चालू करनी होगी।") }
     ) { vm.toggleMic() }
 
     val msgs = ui.conv.messages
@@ -89,6 +90,11 @@ fun ChatScreen(vm: AssistantViewModel) {
         ui.pending?.let { p ->
             Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 ActionCard(p, vm::confirmPending, vm::cancelPending)
+            }
+        }
+        ui.guide?.let { g ->
+            Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                GuideCard(g, vm::goTo, vm::dismissGuide, vm::stopTour)
             }
         }
         ui.error?.let {

@@ -6,6 +6,13 @@ import android.content.Intent
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.vidya.ai.ui.tools.GuideScreen
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -91,6 +98,15 @@ fun VidyaNavHost() {
     }
     val back: () -> Unit = { nav.popBackStack() }
 
+    // the guide can take the user to the right screen, and speaks about each screen the first time
+    val ui by vm.ui.collectAsStateWithLifecycle()
+    fun navigateTo(route: String) {
+        if (Tab.entries.any { it.route == route }) go(route)
+        else { go(Tab.Tools.route); open(route) }
+    }
+    LaunchedEffect(Unit) { vm.navEvents.collect { navigateTo(it) } }
+    LaunchedEffect(current) { current?.let { vm.onScreen(it) } }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onBackground,
@@ -117,10 +133,8 @@ fun VidyaNavHost() {
             }
         }
     ) { padding ->
-        NavHost(
-            nav, startDestination = Tab.Home.route,
-            modifier = Modifier.padding(padding).consumeWindowInsets(padding).imePadding()
-        ) {
+        Box(Modifier.padding(padding).consumeWindowInsets(padding).imePadding()) {
+        NavHost(nav, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize()) {
             composable(Tab.Home.route) { HomeScreen(vm, tools, onOpenChat = { go(Tab.Chat.route) }) }
             composable(Tab.Chat.route) { ChatScreen(vm) }
             composable(Tab.History.route) { HistoryScreen(vm, onOpen = { go(Tab.Chat.route) }) }
@@ -132,7 +146,27 @@ fun VidyaNavHost() {
             composable(ToolRoutes.Memory) { MemoryScreen(tools, back) }
             composable(ToolRoutes.Keys) { ApiKeyScreen(tools, back) }
             composable(ToolRoutes.Permissions) { PermissionsScreen(back) }
-            composable(Tab.Settings.route) { SettingsScreen(tools) }
+            composable(ToolRoutes.Guide) { GuideScreen(vm, tools, back) }
+            composable(Tab.Settings.route) { SettingsScreen(tools, onGoTools = { go(Tab.Tools.route) }) }
+        }
+        if (ui.tourOn) {
+            TourBar(ui.guide?.title ?: "Tour", onStop = vm::stopTour, modifier = Modifier.align(Alignment.TopCenter))
+        }
+        }
+    }
+}
+
+@Composable
+private fun TourBar(title: String, onStop: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.padding(8.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xEE1B2A7A)
+    ) {
+        Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("🧭 $title", Modifier.weight(1f, fill = false),
+                style = MaterialTheme.typography.labelLarge, color = Color.White)
+            TextButton(onClick = onStop) { Text("रोकें") }
         }
     }
 }

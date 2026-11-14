@@ -27,7 +27,7 @@ private val ENGINES = listOf(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(tools: ToolsViewModel) {
+fun SettingsScreen(tools: ToolsViewModel, onGoTools: () -> Unit) {
     val ctx = LocalContext.current
     var micGranted by remember { mutableStateOf(MicPermission.has(ctx)) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { micGranted = MicPermission.has(ctx) }
@@ -40,6 +40,17 @@ fun SettingsScreen(tools: ToolsViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("🧭 सही जगह", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "नाम, आवाज़, भाषा, Memory, API key और Permissions यहाँ नहीं हैं। वे सब Tools टैब में हैं।",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(onClick = onGoTools) { Text("Tools खोलो") }
+            }
+        }
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

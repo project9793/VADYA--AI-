@@ -86,6 +86,21 @@ class SecureStore(context: Context) {
         get() = voiceEngine == "window"
         set(v) { voiceEngine = if (v) "window" else "google" }
 
+    var guideSpeak: Boolean
+        get() = prefs.getBoolean("guide_speak", true)
+        set(v) = prefs.edit().putBoolean("guide_speak", v).apply()
+
+    fun seenGuide(id: String): Boolean =
+        (prefs.getString("seen_guides", "") ?: "").split(',').contains(id)
+
+    fun markSeen(id: String) {
+        val cur = (prefs.getString("seen_guides", "") ?: "").split(',').filter { it.isNotBlank() }.toMutableSet()
+        cur.add(id)
+        prefs.edit().putString("seen_guides", cur.joinToString(",")).apply()
+    }
+
+    fun resetSeen() { prefs.edit().remove("seen_guides").apply() }
+
     companion object {
         const val DEFAULT_MODEL = "gemini-2.5-flash"
         const val DEFAULT_ASSISTANT = "विद्या"

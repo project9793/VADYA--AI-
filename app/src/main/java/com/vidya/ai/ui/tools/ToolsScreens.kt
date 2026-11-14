@@ -17,10 +17,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.vidya.ai.core.AppGuide
 import com.vidya.ai.core.AppPerm
 import com.vidya.ai.core.Languages
 import com.vidya.ai.core.Permissions
 import com.vidya.ai.core.SecureStore
+import com.vidya.ai.ui.assistant.AssistantViewModel
 
 object ToolRoutes {
     const val Home = "tools"
@@ -31,6 +34,7 @@ object ToolRoutes {
     const val Memory = "tools/memory"
     const val Keys = "tools/keys"
     const val Permissions = "tools/permissions"
+    const val Guide = "tools/guide"
 }
 
 private val TTS_VOICES = listOf("Kore", "Aoede", "Leda", "Zephyr", "Puck", "Charon", "Fenrir")
@@ -50,6 +54,8 @@ fun ToolsHomeScreen(tools: ToolsViewModel, onOpen: (String) -> Unit) {
     ) {
         Text("Tools", style = MaterialTheme.typography.headlineMedium)
 
+        ToolCard(Icons.Default.Help, "🧭 Guide — विद्या से सीखें",
+            "ऐप में क्या कहाँ है, बोलकर बताऊँगी") { onOpen(ToolRoutes.Guide) }
         ToolCard(Icons.Default.Person, "1. खाता (Account)",
             tools.userName.ifBlank { "अपना नाम डालिए" }) { onOpen(ToolRoutes.Account) }
         ToolCard(Icons.Default.SmartToy, "2. Assistant का नाम",
@@ -444,6 +450,53 @@ private fun KeyCard(
                     TextButton(onClick = { value = resetValue; onSave(resetValue); saved = true }) { Text("Default") }
                 }
                 if (saved && value.isNotBlank()) Text("✔ Saved")
+            }
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------- guide
+
+@Composable
+fun GuideScreen(vm: AssistantViewModel, tools: ToolsViewModel, onBack: () -> Unit) {
+    val ui by vm.ui.collectAsStateWithLifecycle()
+    ToolPage("🧭 Guide", onBack) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("विद्या से ऐप सीखिए", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "मुझसे पूछिए, जैसे \"API key कहाँ डालूँ?\" या \"आवाज़ कैसे बदलूँ?\" मैं बोलकर बताऊँगी और सही जगह ले भी चलूँगी। " +
+                        "ग़लत जगह जाने पर या कुछ छूटने पर मैं रोककर बताऊँगी कि कहाँ जाना है।",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(onClick = { if (ui.tourOn) vm.stopTour() else vm.startTour() }) {
+                    Text(if (ui.tourOn) "Tour रोकें" else "🧭 पूरा tour शुरू करें")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("बोलकर मार्गदर्शन", Modifier.weight(1f))
+                    Switch(checked = tools.guideSpeak, onCheckedChange = tools::updateGuideSpeak)
+                }
+                TextButton(onClick = tools::resetGuides) {
+                    Text("हर स्क्रीन का पहली बार वाला मार्गदर्शन फिर सुनाओ")
+                }
+            }
+        }
+        AppGuide.items.forEach { item ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(item.title, style = MaterialTheme.typography.titleMedium)
+                    Text("जगह: ${item.where}", style = MaterialTheme.typography.bodySmall)
+                    item.steps.forEachIndexed { i, step ->
+                        Text("${i + 1}. $step", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { vm.speakGuide(item) }) { Text("🔊 सुनो") }
+                        item.route?.let { r ->
+                            OutlinedButton(onClick = { vm.goTo(r) }) { Text("वहाँ ले चलो") }
+                        }
+                    }
+                }
             }
         }
     }

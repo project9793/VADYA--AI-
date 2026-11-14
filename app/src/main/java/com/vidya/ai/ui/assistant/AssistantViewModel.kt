@@ -14,6 +14,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.vidya.ai.core.AppGuide
 import com.vidya.ai.core.AudioPlayer
 import com.vidya.ai.core.DeviceActions
 import com.vidya.ai.core.DeviceControl
@@ -38,7 +39,9 @@ import com.vidya.ai.ui.components.OrbState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,11 +69,16 @@ data class AssistantUiState(
     val error: String? = null,
     val handsFree: Boolean = false,
     val pending: PendingAction? = null,
-    val timing: String = ""
+    val timing: String = "",
+    val guide: GuideAction? = null,
+    val tourOn: Boolean = false
 )
 
 /** A call / WhatsApp message waiting for the user's confirmation. */
 data class PendingAction(val kind: String, val name: String, val number: String, val message: String)
+
+/** A "go there" suggestion from the guide (route = screen to open), or a tour step card. */
+data class GuideAction(val title: String, val text: String, val route: String?, val tour: Boolean = false)
 
 class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
@@ -120,6 +128,13 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private var sarvamDownUntil = 0L
     private var geminiTtsDownUntil = 0L
 
+    // in-app guide
+    private var tourJob: Job? = null
+    private var narrateJob: Job? = null
+    private var androidDone: CompletableDeferred<Unit>? = null
+    private val _navEvents = Channel<String>(Channel.BUFFERED)
+    val navEvents = _navEvents.receiveAsFlow()
+
     init {
         refreshHistory()
         initTts("com.google.android.tts")      // Google's neural voices; falls back to default engine
@@ -148,15 +163,20 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun send(text: String, voice: Boolean) {
         val msg = text.trim()
         if (msg.isEmpty()) return
+        if (_ui.value.tourOn) {
+            stopTour()
+            if (AppGuide.isStop(msg)) { finishWith("ठीक है, tour रोक दिया।", false, null); return }
+        }
         maybeSaveMemory(msg)
         val key = store.geminiKey
         val groqKey = store.groqKey
         if (key.isBlank() && groqKey.isBlank()) {
-            _ui.update { it.copy(orb = OrbState.Idle, error = "पहले Tools → API Key में Groq या Gemini key डालिए।") }
+            guideTo("api_key", "पहले API key डालनी होगी, उसके बिना मैं जवाब नहीं दे पाऊँगी।")
             return
         }
         tts?.stop()
         speakJob?.cancel()
+        narrateJob?.cancel()
         queue?.cancel()
         queue = null
         emitted = 0
@@ -180,6 +200,16 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 finishWith(reply, voice, null)
                 return@launch
             }
+            // 1b) in-app guide: where is what, how to set it up, full tour
+            if (AppGuide.isTourRequest(msg)) {
+                finishWith("ठीक है, ऐप का पूरा tour शुरू करती हूँ। रोकने के लिए \"रुको\" बोलिए या रोकें दबाइए।", false, null)
+                startTour()
+                return@launch
+            }
+            AppGuide.match(msg)?.let { item ->
+                answerGuide(item, voice)
+                return@launch
+            }
             // 2) phone-control commands (call, WhatsApp, YouTube, music, open app ...)
             // the web search starts now and runs while the command check happens (max 2 s)
             var searchHits: List<WebSearch.Hit> = emptyList()
@@ -201,7 +231,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             val hits: List<WebSearch.Hit> = searchHits
 
             val modelId = ids.incrementAndGet()
-            val ctx = buildContext() + WebSearch.asContext(hits)
+            val ctx = buildContext() + WebSearch.asContext(hits) +
+                (if (AppGuide.looksLikeAppHelp(msg)) AppGuide.mapText() else "")
             val streamSpeech = voice && naturalEngines().isNotEmpty()
             var tFirst = 0L
             val onPartial: (String) -> Unit = { partial ->
@@ -286,16 +317,24 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
             " (" + TimeZone.getDefault().id + ")"
 
     /** Adds an assistant message (optionally with a pending confirmation) and speaks it for voice turns. */
-    private fun finishWith(reply: String, voice: Boolean, pending: PendingAction?) {
+    private fun finishWith(
+        reply: String, voice: Boolean, pending: PendingAction?,
+        spoken: String? = null, guide: GuideAction? = null, forceSpeak: Boolean = false
+    ) {
         val t = System.currentTimeMillis()
         val c = _ui.value.conv
         val done = c.copy(
             updated = t,
             messages = c.messages + ChatMessage(ids.incrementAndGet(), "model", reply, t)
         )
-        _ui.update { it.copy(conv = done, busy = false, orb = OrbState.Idle, pending = pending) }
+        _ui.update {
+            it.copy(
+                conv = done, busy = false, orb = OrbState.Idle, pending = pending,
+                guide = guide ?: it.guide?.takeIf { g -> g.tour }
+            )
+        }
         persist(done)
-        if (voice) speak(reply)
+        if (voice || forceSpeak) speak(spoken ?: reply)
     }
 
     private suspend fun handleCommand(cmd: JSONObject, voice: Boolean): Boolean {
@@ -358,6 +397,133 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     fun cancelPending() {
         _ui.update { it.copy(pending = null) }
         finishWith("ठीक है, रद्द कर दिया।", false, null)
+    }
+
+    // ---------------------------------------------------------------- in-app guide
+
+    fun goTo(route: String) {
+        _ui.update { it.copy(guide = null) }
+        _navEvents.trySend(route)
+    }
+
+    fun dismissGuide() = _ui.update { it.copy(guide = null) }
+
+    /** Stops the user from going the wrong way: says why, where to go, and offers to take them there. */
+    fun guideTo(id: String, why: String) {
+        val item = AppGuide.byId(id) ?: return
+        finishWith(
+            why + "\n\n📍 " + item.where,
+            false, null,
+            spoken = why + " " + item.say,
+            guide = GuideAction(item.title, "", item.route),
+            forceSpeak = store.guideSpeak
+        )
+    }
+
+    private fun answerGuide(item: AppGuide.Item, voice: Boolean) {
+        val text = buildString {
+            append("📍 ").append(item.title).append("\n")
+            append("जगह: ").append(item.where).append("\n\n")
+            item.steps.forEachIndexed { i, s -> append(i + 1).append(". ").append(s).append("\n") }
+        }.trim()
+        finishWith(
+            text, voice, null,
+            spoken = item.say,
+            guide = item.route?.let { GuideAction(item.title, "", it) },
+            forceSpeak = store.guideSpeak
+        )
+    }
+
+    fun speakGuide(item: AppGuide.Item) {
+        voiceTurn = false
+        speak(item.say)
+    }
+
+    /** Speaks [text] and waits until it has finished (natural voice first, phone voice as backup). */
+    private suspend fun speakAndWait(text: String) {
+        val clean = LangUtil.stripMarkdown(text)
+        if (clean.isBlank()) return
+        setOrb(OrbState.Thinking)
+        var chunks = speaker.chunksOf(clean)
+        val langTag = LangUtil.detect(clean, store.sttLang).toLanguageTag()
+        for (e in naturalEngines()) {
+            if (chunks.isEmpty()) break
+            val played = try {
+                if (e == "sarvam") {
+                    sarvam.speak(store.sarvamKey, chunks, store.sarvamVoice, langTag) { setOrb(OrbState.Speaking) }
+                } else {
+                    speaker.speak(store.geminiKey, chunks, store.ttsVoice) { setOrb(OrbState.Speaking) }
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (ex: Exception) {
+                0
+            }
+            chunks = chunks.drop(played)
+        }
+        if (chunks.isEmpty()) { setOrb(OrbState.Idle); return }
+        val done = CompletableDeferred<Unit>()
+        androidDone = done
+        speakWithAndroid(chunks.joinToString(" "))
+        done.await()
+    }
+
+    /** First visit of a screen: Vidya says what it is for (only once per screen). */
+    fun onScreen(route: String) {
+        if (!store.guideSpeak || _ui.value.tourOn) return
+        if (store.seenGuide(route)) return
+        val g = AppGuide.screen(route) ?: return
+        store.markSeen(route)
+        narrateJob?.cancel()
+        narrateJob = viewModelScope.launch {
+            delay(700)
+            if (_ui.value.orb != OrbState.Idle || _ui.value.busy) return@launch
+            voiceTurn = false
+            var say = g.say
+            val noKeys = store.geminiKey.isBlank() && store.groqKey.isBlank()
+            if (route == "home" && noKeys) {
+                say += " सबसे पहले टूल्स टैब में एपीआई की डालिए, उसके बिना मैं जवाब नहीं दे पाऊँगी।"
+                _ui.update { it.copy(guide = GuideAction("पहला काम: API Key डालिए", "Tools टैब → 6. API Key", "tools/keys")) }
+            }
+            speakAndWait(say)
+        }
+    }
+
+    fun startTour() {
+        stopTour()
+        tts?.stop(); speakJob?.cancel(); queue?.cancel(); queue = null
+        voiceTurn = false
+        _ui.update { it.copy(tourOn = true, busy = false, orb = OrbState.Idle) }
+        tourJob = viewModelScope.launch {
+            try {
+                val steps = AppGuide.tour
+                for ((i, s) in steps.withIndex()) {
+                    _ui.update { it.copy(guide = GuideAction("Tour ${i + 1}/${steps.size}: ${s.title}", s.say, null, true)) }
+                    _navEvents.trySend(s.route)
+                    delay(600)
+                    speakAndWait(s.say)
+                    delay(500)
+                }
+            } finally {
+                _ui.update {
+                    it.copy(
+                        tourOn = false, guide = null,
+                        orb = if (it.orb == OrbState.Speaking || it.orb == OrbState.Thinking) OrbState.Idle else it.orb
+                    )
+                }
+            }
+        }
+    }
+
+    fun stopTour() {
+        val wasOn = _ui.value.tourOn
+        tourJob?.cancel()
+        tourJob = null
+        if (wasOn) {
+            androidDone?.complete(Unit)
+            tts?.stop()
+            _ui.update { it.copy(tourOn = false, guide = null, orb = OrbState.Idle) }
+        }
     }
 
     /** Date/time, names, language and memories that are sent with every request. */
@@ -437,13 +603,15 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
         when (_ui.value.orb) {
             OrbState.Listening ->
                 if (store.voiceEngine == "gemini") recorder.finish() else recognizer?.stopListening()
-            OrbState.Speaking -> { tts?.stop(); speakJob?.cancel(); queue?.cancel(); queue = null; startListening() }   // interrupt the AI
+            OrbState.Speaking -> { stopTour(); narrateJob?.cancel(); tts?.stop(); speakJob?.cancel(); queue?.cancel(); queue = null; startListening() }   // interrupt the AI
             OrbState.Thinking -> stop()
             OrbState.Idle -> startListening()
         }
     }
 
     fun stop() {
+        stopTour()
+        narrateJob?.cancel()
         job?.cancel()
         recJob?.cancel()
         speakJob?.cancel()
@@ -466,8 +634,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
     /** Default voice path: record with our own mic permission, Gemini transcribes. */
     private fun startRecording() {
         val key = store.geminiKey
-        if (key.isBlank() && store.groqKey.isBlank()) { showError("पहले Tools → API Key में Groq या Gemini key डालिए।"); return }
-        if (!MicPermission.has(app)) { showError("Mic permission चाहिए। Settings tab में दें।"); return }
+        if (key.isBlank() && store.groqKey.isBlank()) { guideTo("api_key", "पहले API key डालनी होगी, उसके बिना मैं सुन या जवाब नहीं दे पाऊँगी।"); return }
+        if (!MicPermission.has(app)) { guideTo("permissions", "माइक की अनुमति चालू करनी होगी।"); return }
         recJob?.cancel()
         _ui.update { it.copy(orb = OrbState.Listening, partial = "", error = null) }
         recJob = viewModelScope.launch {
@@ -575,7 +743,7 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> Unit
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     if (MicPermission.has(app)) switchToDialog()
-                    else showError("Mic permission चाहिए। Settings tab में दें।")
+                    else guideTo("permissions", "माइक की अनुमति चालू करनी होगी।")
                 }
                 11, 12, 13 -> {   // server disconnected / language not supported / unavailable
                     if (sttAttempt + 1 < sttPlans().size) {
@@ -777,6 +945,8 @@ class AssistantViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private fun onSpeakDone() {
         setOrb(OrbState.Idle)
+        androidDone?.complete(Unit)
+        androidDone = null
         if (_ui.value.handsFree && voiceTurn) startListening()
     }
 

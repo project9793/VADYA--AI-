@@ -21,6 +21,7 @@ import com.vidya.ai.ui.assistant.AssistantViewModel
 import com.vidya.ai.ui.tools.ToolsViewModel
 import com.vidya.ai.ui.common.rememberMicAction
 import com.vidya.ai.ui.components.ActionCard
+import com.vidya.ai.ui.components.GuideCard
 import com.vidya.ai.ui.components.AiOrb
 import com.vidya.ai.ui.components.OrbState
 import com.vidya.ai.ui.theme.VidyaCyan
@@ -33,7 +34,7 @@ fun HomeScreen(vm: AssistantViewModel, tools: ToolsViewModel, onOpenChat: () -> 
     var text by remember { mutableStateOf("") }
 
     val onMic = rememberMicAction(
-        onDenied = { vm.showError("Mic permission चाहिए। Settings tab में जाकर दें।") }
+        onDenied = { vm.guideTo("permissions", "माइक की अनुमति चालू करनी होगी।") }
     ) { vm.toggleMic() }
 
     val statusText = when (ui.orb) {
@@ -120,6 +121,10 @@ fun HomeScreen(vm: AssistantViewModel, tools: ToolsViewModel, onOpenChat: () -> 
         ui.pending?.let { p ->
             Spacer(Modifier.height(12.dp))
             ActionCard(p, vm::confirmPending, vm::cancelPending)
+        }
+        ui.guide?.let { g ->
+            Spacer(Modifier.height(12.dp))
+            GuideCard(g, vm::goTo, vm::dismissGuide, vm::stopTour)
         }
 
         if (lastUser != null) {

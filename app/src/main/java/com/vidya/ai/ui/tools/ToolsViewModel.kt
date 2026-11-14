@@ -39,6 +39,7 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     var voiceEngine by mutableStateOf(store.voiceEngine); private set
     var searchEnabled by mutableStateOf(store.searchEnabled); private set
     var memoryEnabled by mutableStateOf(store.memoryEnabled); private set
+    var guideSpeak by mutableStateOf(store.guideSpeak); private set
     var hasGeminiKey by mutableStateOf(store.geminiKey.isNotBlank()); private set
     var hasGroqKey by mutableStateOf(store.groqKey.isNotBlank()); private set
     var hasSarvamKey by mutableStateOf(store.sarvamKey.isNotBlank()); private set
@@ -63,6 +64,8 @@ class ToolsViewModel(app: Application) : AndroidViewModel(app) {
     fun updateVoiceEngine(v: String) { store.voiceEngine = v; voiceEngine = v }
     fun updateSearchEnabled(v: Boolean) { store.searchEnabled = v; searchEnabled = v }
     fun updateMemoryEnabled(v: Boolean) { store.memoryEnabled = v; memoryEnabled = v }
+    fun updateGuideSpeak(v: Boolean) { store.guideSpeak = v; guideSpeak = v }
+    fun resetGuides() { store.resetSeen() }
 
     fun saveGemini(key: String) { store.geminiKey = key.trim(); hasGeminiKey = store.geminiKey.isNotBlank() }
     fun saveGroq(key: String) { store.groqKey = key.trim(); hasGroqKey = store.groqKey.isNotBlank() }
